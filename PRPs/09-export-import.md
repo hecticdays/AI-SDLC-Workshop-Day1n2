@@ -372,3 +372,38 @@ function ExportImportToolbar({ onImported }: { onImported: () => void }) {
 - Zero duplicate tag rows created across repeated imports of files sharing tag names (case-insensitive match rate: 100%).
 - Import of a 500-todo file completes in under 5 seconds on the reference dev environment.
 - Zero partial-write incidents (transaction failure always results in 0 rows written, never a partial set).
+
+## Person 5 Evaluation
+
+**Review status:** Initial requirements review complete; not implementation verification. The repository has no application source or executable tests yet. Findings below are open; existing acceptance checkboxes remain unchecked.
+
+### Findings
+
+| ID | Severity | Evidence and impact | Required clarification or change |
+|---|---|---|---|
+| EXP-01 | High | The import schema accepts whitespace-only titles, arbitrary date/color strings, any integer reminder, and inconsistent recurrence fields. A structurally valid file can bypass the domain rules enforced by normal CRUD. | Reuse domain validation for todos, subtasks, and tags. Specify valid dates, reminder values, recurrence/due-date constraints, and length limits. Explicitly allow historical due dates for backup restoration rather than applying the create-only future-date rule. |
+| EXP-02 | High | RFC 4180 quoting does not prevent spreadsheet formula injection from user-controlled titles beginning with formula prefixes such as `=`. | Define spreadsheet-safe text serialization, including formula prefixes and leading control characters. Keep JSON lossless; test CSV safety separately from CSV syntax. |
+| EXP-03 | Medium | Edge Cases requires subtask positions to be normalized to array order, but `position: s.position ?? i` preserves every provided position because the schema requires it. | Insert with the array index as position; test gaps, duplicates, and negative positions. |
+| EXP-04 | Medium | Case-insensitive tag reuse is specified, but the stated `UNIQUE(user_id, name)` constraint does not itself enforce it. Repeated equivalent tags within one todo can also attempt the same composite association twice. | Agree on name normalization with PRP 06; deduplicate each todo's resolved tag IDs before linking. Define color precedence and whether reuse counts describe distinct tags or occurrences. |
+| EXP-05 | Medium | Large files have no enforced limit and are read into memory on both client and server, followed by synchronous database writes. A warning does not bound resource use. | Agree on request-byte and item/nesting limits and a structured rejection response before allocation/writes. This changes the current no-hard-limit policy and needs owner approval. |
+| EXP-06 | Medium | The transaction sample does not explicitly initialize `last_notification_sent` or separate restored completion state from normal completion actions. The testing list does not prove rollback or cross-user isolation. | Specify notification-state initialization and that restoration must not generate recurring instances or send notifications as a completion side effect; test the agreed behavior and transactional failure. |
+| EXP-07 | Low | The CSV user story promises analysis by tag, but the fixed columns contain no tags. `exported_at` says Singapore local time while `toISOString()` emits UTC (`Z`), and the DB-error handler throws instead of returning the documented JSON error contract. | Confirm CSV's intended analysis scope, timestamp representation, and a stable JSON 500 response. Define invalid export-format handling rather than silently exporting JSON. |
+
+### Acceptance and Test Additions Proposed
+
+- [ ] Export as user A excludes user B's todos, subtasks, and tags; missing/expired sessions return 401 for both endpoints. Imported ownership always comes from the session, never payload IDs.
+- [ ] A forced failure after inserting a todo, subtask, and tag leaves all four tables unchanged, including pre-existing data.
+- [ ] A representative round-trip preserves completion, historical due dates, recurrence, reminders, subtask order, and tag associations; explicitly define which timestamps are preserved.
+- [ ] Reject invalid domain values before writes, while accepting empty exports and valid historical backups.
+- [ ] Repeated case-equivalent tags within/across todos create one user-scoped tag and one association per todo; an existing tag's color wins.
+- [ ] Parse exported CSV using an independent CSV parser and assert spreadsheet-safe handling of formula-like text, commas, quotes, and newlines.
+- [ ] Test malformed JSON, unsupported versions, database failures, repeat imports, and the agreed size boundary through the API, not only the file picker.
+- [ ] Verify request failure leaves the UI usable, retains existing todos, and permits selecting the same file again.
+
+### Questions and Cross-PRP Handoffs
+
+- **Person 1 (PRP 01):** Confirm import-specific validation, timestamp preservation, and export ordering. Historical backups must not fail the new-todo future-date rule.
+- **Person 2 (PRPs 03/04):** Confirm notification-state reset and recurrence side effects when restoring completed or overdue todos.
+- **Person 3 (PRP 05):** Confirm array order is authoritative and positions are normalized on import. Templates remain excluded.
+- **Person 4 (PRP 06):** Agree on case/whitespace normalization, duplicate associations, and tag color/count semantics.
+- **Team decision:** Is CSV intentionally tag-free, and what resource limits are acceptable? The PRP already resolves the user-guide disagreement in favor of restoring subtasks/tags; keep that contract explicit during implementation.
