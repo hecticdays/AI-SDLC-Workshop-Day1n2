@@ -1,6 +1,22 @@
 # WebAuthn/Passkeys Authentication
 
-Passwordless registration and login using WebAuthn/passkeys (biometrics, security keys, or platform authenticators), with JWT-backed sessions and route protection middleware.
+Passwordless registration and login using WebAuthn/passkeys (biometrics, security keys, or platform authenticators), with JWT-backed sessions and Next.js 16 proxy protection.
+
+## Implementation Status
+
+**Last updated:** 2026-10-30. Complete (Person 5). Registration/login options and verification, authenticated additional-passkey enrollment (`POST /api/auth/enroll-options` and `/api/auth/enroll-verify`), logout and `/api/auth/me` are implemented. The login page supports retryable registration/login; account controls expose enrollment/logout. [proxy.ts](../proxy.ts) protects `/` and `/calendar`; APIs independently validate sessions and resource ownership. Route protection does not assert a completed calendar feature.
+
+[lib/webauthn.ts](../lib/webauthn.ts) uses `@simplewebauthn/browser` 13.3.0 and `@simplewebauthn/server` 13.3.3, stable opaque account handles, account-scoped credentials, `counter ?? 0`, and required user verification in both options and server verification. [lib/auth-store.ts](../lib/auth-store.ts) persists unpredictable browser/account/operation-bound attempts in SQLite, with a 300-second TTL and atomic single-use consumption. Registration user/credential writes are atomic; counter updates reject stale concurrent writes. Origin and RP configuration are checked; anonymous registration cannot add a passkey to an existing account.
+
+Enrollment requires a signed recent `authTime` in the five-minute window, not merely a valid seven-day session; sign in again when it is stale. Session cookies are HttpOnly, SameSite=Lax, path `/`, seven-day expiry, and Secure in production. Logout clears browser session/attempt cookies but does not revoke a copied JWT. There is no account recovery if all passkeys are lost.
+
+Authentication has per-browser rate limits. IP buckets are enabled only with `AUTH_TRUST_PROXY=true` and a valid forwarded IP; the trusted upstream must strip/overwrite client forwarding headers and prevent direct untrusted access. Without that deployment configuration, do not claim IP/global abuse protection. Distinct unknown-account/duplicate-name responses still permit account enumeration.
+
+Development requires a private `JWT_SECRET` of at least 32 bytes, `APP_ORIGIN=http://localhost:3000` and `WEBAUTHN_RP_ID=localhost`; use localhost, not an IP RP ID rejected by Chromium. Production requires HTTPS, matching public origin/RP, and stable private persistent SQLite (attempts and credentials share that storage). See [README.md](../README.md) for a secret-generation expression; do not use test secrets.
+
+Evidence: [tests/auth.test.ts](../tests/auth.test.ts) and [tests/01-authentication.spec.ts](../tests/01-authentication.spec.ts). Combined verification: 35 unit/DB tests pass; loaded `lib/**` coverage is 87.53% lines / 89.25% branches / 88.73% functions; Next.js 16.4.3 build succeeds; 62 desktop/mobile Playwright cases pass (32 prior + 30 new). Virtual authenticators and isolated fixtures provide implementation evidence, not a production security audit, real-device certification, or proof of every success metric. Fixtures do not rely on authentication test-file order.
+
+**Example precedence:** The original schema/handler/UI snippets below and their review are historical design references, not copy-ready SimpleWebAuthn 13 code. Current bound SQLite attempts, enrollment, UV/origin checks and `proxy.ts` supersede username-only challenge examples, old browser/server signatures and `middleware.ts` examples. Unticked checkboxes remain individual verification plans.
 
 **Dependencies**: This is foundational infrastructure, not a downstream feature. The `session.userId` produced by `getSession()` here is required by every API route in PRPs 01–10 (`if (!session) return 401`). Per the PRP Index's Implementation Priority, it can be built in parallel with or after the other features — nothing else depends on its UI, but everything else depends on its session primitive existing before those routes can be authorized.
 
@@ -8,7 +24,7 @@ Passwordless registration and login using WebAuthn/passkeys (biometrics, securit
 
 ## Feature Overview
 
-The app uses WebAuthn (passkeys) as the *only* authentication mechanism — there is no password field anywhere in the schema or UI. Users register with a username and their device's platform authenticator (Touch ID, Face ID, Windows Hello, PIN) or a roaming security key (YubiKey, etc.). Login re-authenticates the same way. A successful registration or login creates a JWT session stored in an HTTP-only cookie with a 7-day expiry. `middleware.ts` protects `/` and `/calendar`, redirecting unauthenticated requests to `/login`.
+The app uses WebAuthn (passkeys) as the *only* authentication mechanism — there is no password field anywhere in the schema or UI. Users register with a username and their device's platform authenticator (Touch ID, Face ID, Windows Hello, PIN) or a roaming security key (YubiKey, etc.). Login re-authenticates the same way. A successful registration or login creates a JWT session stored in an HTTP-only cookie with a 7-day expiry. `proxy.ts` protects `/` and `/calendar`, redirecting unauthenticated requests to `/login`.
 
 ## User Stories
 
@@ -25,8 +41,8 @@ The app uses WebAuthn (passkeys) as the *only* authentication mechanism — ther
 1. User navigates to `/login` (or is redirected there from a protected route).
 2. User enters a username and clicks **Register**.
 3. Client calls `POST /api/auth/register-options` with the username.
-4. Server checks the username is not already taken, generates a WebAuthn challenge via `generateRegistrationOptions`, stores the challenge (session/short-lived store keyed by username), and returns the options.
-5. Client calls `startRegistration(options)` from `@simplewebauthn/browser`, which prompts the browser's platform authenticator (fingerprint/Face ID/PIN/security key).
+4. Server checks the username is not already taken, generates a WebAuthn challenge via `generateRegistrationOptions`, stores a browser/account/operation-bound SQLite attempt with 300-second expiry, and returns the options.
+5. Client calls `startRegistration({ optionsJSON: options })` from `@simplewebauthn/browser`, which prompts the browser's platform authenticator (fingerprint/Face ID/PIN/security key).
 6. Browser returns an attestation response; client POSTs it to `POST /api/auth/register-verify`.
 7. Server calls `verifyRegistrationResponse`, and on success creates the `users` row and the corresponding `authenticators` row, then calls `createSession(user)`.
 8. Server responds 200; client redirects to `/`.
@@ -34,13 +50,13 @@ The app uses WebAuthn (passkeys) as the *only* authentication mechanism — ther
 ### Login
 1. User navigates to `/login`, enters their username, clicks **Login**.
 2. Client calls `POST /api/auth/login-options` with the username; server looks up the user's registered authenticator(s), generates an assertion challenge via `generateAuthenticationOptions`, stores it, returns options.
-3. Client calls `startAuthentication(options)`, prompting the same biometric/security-key flow.
+3. Client calls `startAuthentication({ optionsJSON: options })`, prompting the same biometric/security-key flow.
 4. Client POSTs the assertion response to `POST /api/auth/login-verify`.
 5. Server looks up the authenticator by `credential_id`, calls `verifyAuthenticationResponse`, updates the authenticator's `counter`, calls `createSession(user)`.
 6. Server responds 200; client redirects to `/`.
 
 ### Session & Logout
-1. On every page load of `/` or `/calendar`, `middleware.ts` checks for a valid session cookie; if missing/invalid, redirects to `/login`.
+1. On every page load of `/` or `/calendar`, `proxy.ts` checks for a valid session token; if missing/invalid, redirects to `/login`. APIs separately check the account and ownership.
 2. `/login` itself checks `GET /api/auth/me`; if already authenticated, redirects to `/`.
 3. User clicks **Logout** (top-right corner) → `POST /api/auth/logout` clears the cookie → redirect to `/login`.
 
@@ -117,6 +133,8 @@ export async function deleteSession(): Promise<void>;
 | POST | `/api/auth/register-verify` | Verify the registration attestation, create `users`/`authenticators` rows, create session |
 | POST | `/api/auth/login-options` | Generate a WebAuthn authentication challenge for a username |
 | POST | `/api/auth/login-verify` | Verify the authentication assertion, update `counter`, create session |
+| POST | `/api/auth/enroll-options` | Generate additional-passkey options for the recently authenticated account |
+| POST | `/api/auth/enroll-verify` | Verify and attach a passkey to that same recently authenticated account |
 | POST | `/api/auth/logout` | Clear the session cookie |
 | GET | `/api/auth/me` | Return the current session's user, or 401 |
 
@@ -183,7 +201,7 @@ export async function POST(request: NextRequest) {
 
 **Buffer/encoding requirement:** `credential_id` is stored as text but WebAuthn APIs operate on buffers with base64url encoding. Use `isoBase64URL` from `@simplewebauthn/server/helpers` for all conversions between the stored string form and the buffer form the verification functions expect. Mixing base64 and base64url encodings is a common source of "authenticator not recognized" bugs.
 
-### Route Protection (`middleware.ts`)
+### Historical Route Protection Example (`middleware.ts`; superseded by `proxy.ts`)
 
 ```typescript
 export async function middleware(request: NextRequest) {
@@ -314,14 +332,14 @@ async function handleLogout() {
 - [ ] A successful register or login sets an HTTP-only session cookie with a 7-day expiry
 - [ ] `GET /api/auth/me` returns the current user when authenticated, 401 otherwise
 - [ ] `POST /api/auth/logout` clears the session cookie and subsequent requests are treated as unauthenticated
-- [ ] `middleware.ts` redirects unauthenticated requests to `/` and `/calendar` to `/login`
+- [ ] `proxy.ts` redirects unauthenticated requests to `/` and `/calendar` to `/login`
 - [ ] `/login` redirects an already-authenticated user to `/`
 - [ ] A user can register a second authenticator (second device) and log in with either
 - [ ] Session persists across a full page reload and a browser restart within the 7-day window
 
 ## Testing Requirements
 
-Test file: `tests/01-authentication.spec.ts` (first in the suite — every other feature's tests depend on being able to authenticate first, so this file must be green before other suites are meaningful). Playwright is configured with **virtual WebAuthn authenticators** via Chromium DevTools Protocol flags in `playwright.config.ts`, and `timezoneId: 'Asia/Singapore'` set globally.
+Test file: `tests/01-authentication.spec.ts`. Each suite provisions its own authenticated state; numbering is not an execution-order dependency. Authentication cases use virtual WebAuthn authenticators through Chromium DevTools Protocol, and `timezoneId: 'Asia/Singapore'` is set globally in `playwright.config.ts`.
 
 **E2E tests:**
 - [ ] Register a new user with a virtual authenticator, verify redirect to `/`
@@ -349,7 +367,7 @@ Test file: `tests/01-authentication.spec.ts` (first in the suite — every other
 - Account recovery when a user loses their only registered passkey — this is a real, currently-unaddressed gap (no recovery codes, no email-based reset) and should be flagged to stakeholders rather than silently assumed solved
 - Email verification or email-based communication of any kind
 - Admin/user-management UI (listing, disabling, or deleting other users' accounts)
-- Rate limiting / brute-force protection on the auth endpoints (tracked separately under the project's Security Guidelines, not this PRP)
+- Comprehensive distributed abuse protection (implemented browser buckets and opt-in trusted-proxy IP buckets are not a production-wide security certification)
 
 ## Success Metrics
 
@@ -361,7 +379,20 @@ Test file: `tests/01-authentication.spec.ts` (first in the suite — every other
 
 ## Person 5 Evaluation
 
-**Review status:** Initial requirements review complete; not implementation or security verification. No application source or executable authentication tests exist yet. Findings below are open; existing acceptance checkboxes remain unchecked.
+**Historical review status:** Requirements evaluation complete; rechecked at `a3b4feb`, when passkey handlers and dedicated tests were absent. The handoffs/findings below are preserved as historical context; the current implementation status above supersedes their missing-feature assessment. Neither the review nor current tests constitute production security verification; unticked proposed criteria are not blanket completion claims.
+
+### Current Resolution and Follow-up
+
+AUTH-01/02/03 are addressed by recent-auth enrollment and account/browser/operation-bound expiring single-use attempts. AUTH-04/05 are addressed by required UV, stable handles, origin/RP checks and pinned SimpleWebAuthn 13 packages. AUTH-06/07 are addressed by atomic registration/counter handling, retryable pending UI and independent test fixtures. AUTH-08 now has explicit cookie/claim validation and browser-local logout; server-side JWT revocation remains excluded. AUTH-09 uses Next.js 16 proxy protection and conditional trusted-proxy IP buckets, but account enumeration, real-device breadth and prompt-inclusive latency are not certified. Recovery remains excluded. Production must provision HTTPS, private secrets and persistent private SQLite plus trusted upstream resource/header handling.
+
+### Historical Implementation Handoff (at `a3b4feb`)
+
+- **Session contract available:** [lib/auth.ts](../lib/auth.ts) exports `getSession(): Promise<Session | null>` with `{ userId, username }`. Normal cookie authentication verifies HS256, requires `exp` and `iat`, validates session fields, and checks that the account still exists. Resource handlers must still authorize ownership themselves.
+- **AUTH-08 partly addressed in source:** `JWT_SECRET` requires at least 32 bytes; session cookies use HttpOnly, SameSite=Lax, path `/`, production Secure, and seven-day expiry. Deletion matches cookie attributes. Logout clears the browser cookie but does not revoke a copied JWT; revocation policy and dedicated tests remain open. The PRP examples still need alignment with this implementation.
+- **Passkey persistence missing:** [lib/db.ts](../lib/db.ts) has users but no authenticator/challenge tables or account-stable WebAuthn user-handle contract. The existing session helper does not establish a passkey enrollment or verification flow; AUTH-01 through AUTH-07 remain implementation requirements.
+- **Demo is not authentication evidence:** Session lookup bypasses cookies only when development mode, `DEMO_MODE=true`, and `DATABASE_PATH=demo.db` all hold. Run authentication and unauthenticated-access checks with this explicit demo mode disabled.
+- **Fixture boundary:** [tests/helpers.ts](../tests/helpers.ts) currently provisions database users and signs test JWTs for Person 4, including foreign-owned resources. It is not a virtual-authenticator fixture and does not prove registration, passkey login, or two independent authenticated browser contexts. Reuse its session setup where appropriate, then add dedicated WebAuthn and two-context fixtures for all owners.
+- **Verification remaining:** Implement registration, login, additional-passkey enrollment, logout routing, and protected-page behavior with the challenge/account-binding decisions below. Do not mark the feature complete based on the existing `/api/auth/me` route or session functions alone.
 
 ### Findings
 

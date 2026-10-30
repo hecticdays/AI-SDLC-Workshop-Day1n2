@@ -18,8 +18,7 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   expect((await page.request.get('/api/todos')).status()).toBe(401);
   const username = `person1-${Date.now()}`;
   await page.getByLabel('Username').fill(username);
-  await page.getByLabel('Name', { exact: true }).fill('Person One');
-  await page.getByRole('button', { name: 'Create passkey' }).click();
+  await page.getByRole('button', { name: 'Register', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Add task' })).toBeVisible({ timeout: 20_000 });
 
   const singaporeTomorrow = new Date(Date.now() + 8 * 60 * 60 * 1000 + 48 * 60 * 60 * 1000)
@@ -27,14 +26,13 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   const dueDate = singaporeTomorrow.slice(0, 10);
   await page.getByLabel('New task title').fill('Prepare evaluation demo');
   await page.getByLabel('New task priority').selectOption('high');
-  await page.getByLabel('New todo due date').fill(singaporeTomorrow);
-  await page.getByLabel('Repeat').check();
-  await page.getByLabel('New todo recurrence pattern').selectOption('weekly');
-  await page.getByLabel('New todo reminder').selectOption('60');
+  await page.getByLabel('New task due date').fill(singaporeTomorrow);
+  await page.getByLabel('New task recurrence').selectOption('weekly');
+  await page.getByLabel('New task reminder').selectOption('60');
   await page.getByRole('button', { name: 'Add task' }).click();
   await expect(page.getByText('Prepare evaluation demo')).toBeVisible();
   await expect(page.getByText('Repeats weekly')).toBeVisible();
-  await expect(page.getByText('Reminder set')).toBeVisible();
+  await expect(page.getByLabel('Reminder 1h before due')).toBeVisible();
 
   const created = await page.request.get('/api/todos');
   expect(created.ok()).toBe(true);
@@ -124,14 +122,18 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   await page.getByLabel('Filter by priority').selectOption('all');
   await expect(page.getByText('Prepare evaluation demo revised')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Mark Prepare evaluation demo revised complete' }).click();
+  await page.getByRole('button', { name: 'Complete task Prepare evaluation demo revised', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Completed' }).getByText('Prepare evaluation demo revised')).toBeVisible();
+<<<<<<< HEAD
   await page.getByRole('button', { name: 'Mark Prepare evaluation demo revised incomplete' }).click();
   await expect(page.getByRole('region', { name: 'Pending' }).getByText('Prepare evaluation demo revised')).toBeVisible();
   await page.getByRole('button', { name: 'Delete Prepare evaluation demo revised' }).click();
+=======
+  await page.getByRole('region', { name: 'Completed', exact: true }).getByRole('button', { name: 'Delete task Prepare evaluation demo revised', exact: true }).click();
+>>>>>>> 7d87ba976183962fc380a0203fbd8f3adc2c922a
   await expect(page.getByRole('heading', { name: 'Delete todo?' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
-  await expect(page.getByText('Prepare evaluation demo revised')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Completed', exact: true }).getByText('Prepare evaluation demo revised')).toBeVisible();
 
   await page.getByRole('link', { name: /calendar/i }).click();
   const grid = page.getByRole('grid', { name: 'Monthly calendar' });
@@ -168,18 +170,19 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   await expect(page).toHaveURL(new RegExp(`month=${currentMonth}$`));
 
   await page.getByRole('link', { name: 'Tasks' }).click();
-  await page.getByRole('button', { name: 'Delete Prepare evaluation demo revised' }).click();
+  await page.getByRole('region', { name: 'Completed', exact: true }).getByRole('button', { name: 'Delete task Prepare evaluation demo revised', exact: true }).click();
   const deleteResponsePromise = page.waitForResponse((response) =>
     response.request().method() === 'DELETE' && response.url().endsWith(`/api/todos/${persistedTodo.id}`));
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
-  expect((await deleteResponsePromise).status()).toBe(200);
-  await expect(page.getByText('Prepare evaluation demo revised')).toHaveCount(0);
+  expect((await deleteResponsePromise).status()).toBe(204);
+  await expect(page.getByRole('region', { name: 'Completed', exact: true }).getByText('Prepare evaluation demo revised')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Pending', exact: true }).getByText('Prepare evaluation demo revised', { exact: true })).toBeVisible();
   const cascadeDb = new Database(databasePath);
   expect(cascadeDb.prepare('SELECT COUNT(*) AS count FROM subtasks WHERE todo_id = ?').get(persistedTodo.id)).toMatchObject({ count: 0 });
   expect(cascadeDb.prepare('SELECT COUNT(*) AS count FROM todo_tags WHERE todo_id = ?').get(persistedTodo.id)).toMatchObject({ count: 0 });
   cascadeDb.close();
 
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByRole('button', { name: 'Logout', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   const unauthenticatedTodos = await page.request.get('/api/todos');
   expect(unauthenticatedTodos.status()).toBe(401);

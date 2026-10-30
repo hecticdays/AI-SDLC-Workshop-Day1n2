@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { verifySessionToken } from '@/lib/session-token';
+import { verifySessionToken } from './lib/auth-token';
 
 export async function proxy(request: NextRequest) {
   if (process.env.NODE_ENV === 'development' && process.env.DEMO_MODE === 'true'
@@ -14,5 +14,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/calendar/:path*', '/api/todos/:path*', '/api/holidays/:path*'],
+  matcher: ['/', '/calendar/:path*', '/api/todos/:path*', '/api/holidays/:path*', '/api/notifications/:path*'],
 };

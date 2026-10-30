@@ -1,7 +1,3 @@
-import { NextResponse } from 'next/server';
-import { clearSession } from '@/lib/auth';
-
-export async function POST() {
-  await clearSession();
-  return NextResponse.json({ success: true });
-}
+import { authEndpoint } from '@/lib/webauthn';
+export const runtime = 'nodejs';
+export async function POST(request: Request) { return authEndpoint(request, 'logout'); }

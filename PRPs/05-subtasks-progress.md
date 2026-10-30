@@ -1,5 +1,15 @@
 # Subtasks & Progress Tracking
 
+## Implementation Status
+
+**Last updated:** 2026-10-30. Complete (Person 3). The current implementation is in [lib/db.ts](../lib/db.ts), [lib/progress.ts](../lib/progress.ts) and [app/page.tsx](../app/page.tsx). All three mutation endpoints below exist. Create/rename/toggle/delete validate runtime input and authorize through the parent todo; absent/foreign resources return 404 and unauthenticated requests return 401. Ordered reads use position then ID; insertion starts at zero and appends after the current maximum; deletion leaves gaps. SQLite foreign keys enforce parent cascade deletion.
+
+The UI includes rename, expand/collapse, independent parent/checklist completion, hidden zero-item progress, rounded progress, pending controls, optimistic toggles with server reconciliation and failure recovery. A pending mutation blocks conflicting actions instead of relying on last-response-wins races. Progress is client-safe; the UI does not load SQLite.
+
+Evidence: [tests/person3.test.ts](../tests/person3.test.ts) and [tests/07-subtasks.spec.ts](../tests/07-subtasks.spec.ts). Combined Persons 3/5 verification reports 35 passing unit/DB tests, loaded `lib/**` coverage of 87.53% lines / 89.25% branches / 88.73% functions, a successful Next.js 16.4.3 build and 62 passing desktop/mobile Playwright cases (32 prior + 30 new). See [current evaluation](../EVALUATION.md#persons-3-and-5-implementation-verification) for scope and limits; no unbounded-list or blanket latency guarantee is inferred.
+
+**Example precedence:** The original design snippets below are retained for review history, not copy-ready current APIs. Actual store helpers are user-scoped; the current implementation and this status section supersede the snippets' unscoped signatures and wait-only toggle example. Unticked test/acceptance boxes remain individual verification plans, not missing-route claims.
+
 **Dependencies:** Adds a new `subtasks` table that CASCADE-deletes with its parent `todo` (see [PRP 01 — Todo CRUD Operations](./01-todo-crud-operations.md)). The subtask pattern (`title` + `position`) is reused by the [Template System (PRP 07)](./07-template-system.md) via JSON serialization, and subtask titles are included in [Search (PRP 08)](./08-search-filtering.md).
 
 [← PRP Index](./README.md)
@@ -272,7 +282,7 @@ function SubtaskList({ todoId, subtasks, onChange }: {
 - **Deleting the last incomplete subtask**: the bar recalculates to 100% and turns green immediately, even though the user's intent was removal, not completion — this is expected and matches the pure `calculateProgress` semantics (percent is only ever a function of the remaining rows).
 - **Deleting the parent todo while subtasks are expanded**: the row unmounts; no dangling fetches should be made for subtask children after the todo is gone. No separate confirmation is shown for the cascade (matches PRP 01's no-confirmation delete behavior).
 - **Very long subtask lists**: no hard cap is specified — the checklist can grow unbounded. Consider virtualization or a "show more" affordance only if a todo exceeds ~50 subtasks in practice; not required for v1.
-- **Rapid double-toggle / race condition**: two fast clicks on the same checkbox before the first `PUT` resolves could send conflicting `completed` values. The UI should optimistically update local state immediately and reconcile with the server response; the last request to resolve wins server-side.
+- **Rapid double-toggle / race condition**: the UI optimistically updates progress and blocks conflicting actions while the mutation is pending, then reconciles with the server or rolls back on failure. It does not send competing toggles and rely on last-response-wins ordering.
 - **Empty or whitespace-only subtask title**: rejected client-side (`.trim()` check before enabling submit) and server-side (400 response), mirroring todo title validation in PRP 01.
 - **Subtask on a todo owned by another user**: `POST/PUT/DELETE` must 404, not 403, to avoid leaking existence of another user's todo IDs.
 
