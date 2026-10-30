@@ -183,6 +183,23 @@ These are recorded handoffs, not completed decisions or notifications to other t
 - [ ] Date calculations accurate (Singapore timezone)
 - [ ] Can disable recurring on existing todo
 
+#### PRP Review: Person 2
+**Review status:** Needs clarification before implementation. User flow, technical requirements, edge cases, acceptance criteria, and tests reviewed in [PRP 03](PRPs/03-recurring-todos.md).
+
+**Findings:**
+- **High — completion is not atomic or concurrency-safe.** The example updates the current todo, inserts the next instance, then copies tags as separate operations, despite describing the work as atomic. A failure can leave a completed todo without its successor or with missing tags; concurrent completion requests can both observe `completed = false` and create successors. Perform the state transition, successor insert, and tag copy in one database transaction with a durable idempotency guard.
+- **High — undoing completion can create another successor.** PRP 01 permits unchecking a completed todo. After the first completion creates a successor, unchecking and completing the original again passes the documented `false → true` check and can create a duplicate occurrence. Define undo/recompletion behavior and persist enough occurrence/lineage state to enforce it.
+- **Medium — month/year clamping can permanently shift the schedule.** Calculating each occurrence from the prior due date means Jan 31 → Feb 28 → Mar 28, and Feb 29 → Feb 28 can remain on Feb 28 in later years. This may conflict with the stated same-day-of-month/year intent. Specify whether the original anchor date is retained and add multi-cycle tests.
+- **Medium — stopping recurrence has ambiguous scope.** Unchecking Repeat affects only the edited instance. A successor already created remains recurring and can continue the sequence. Clarify whether “stop” means this instance only or the entire logical series; the schema currently has no series identifier.
+- **Medium — completion may copy stale metadata.** The example creates the successor from `existing`, even though the same PUT first applies `body` to produce `updated`. If completion and field edits arrive together, the successor will not inherit the values just submitted, contrary to the “current values at completion time” edge case.
+
+**Questions for the owner:**
+- Should monthly/yearly recurrence retain the original date as its anchor after a clamped occurrence?
+- Does disabling Repeat stop only the edited todo or the full series, including an already-created successor? What should undoing and re-completing do?
+- Can completion and metadata edits occur in the same PUT, and should the successor inherit the updated values?
+
+**Testing gaps:** Add tests for concurrent completion, uncomplete/recomplete, a multi-cycle month-end and leap-day schedule, stopping after a successor exists, and completing while changing inherited fields. Existing date unit tests cover single-step calculations but not these behaviors.
+
 ---
 
 ### ✅ Feature 04: Reminders & Notifications
@@ -214,6 +231,27 @@ These are recorded handoffs, not completed decisions or notifications to other t
 - [ ] Notifications fire at correct time
 - [ ] Only one notification per reminder
 - [ ] Works in Singapore timezone
+
+#### PRP Review: Person 2
+**Review status:** Needs clarification before implementation. User flow, technical requirements, edge cases, acceptance criteria, and tests reviewed in [PRP 04](PRPs/04-reminders-notifications.md).
+
+**Findings:**
+- **High — granted permission is not restored in client state after reload.** The hook initializes `permission` to `default` and only changes it after requesting permission. The browser remembers the grant, but a reload leaves the UI showing “Enable Notifications” and prevents polling. Initialize/synchronize state from `Notification.permission` when the client mounts and when the page becomes active.
+- **High — “exactly once” conflicts with the polling design.** The endpoint returns unclaimed reminders and the client displays the notification before stamping it. Two tabs or overlapping polls can both display before either PUT completes; the `tag` option does not provide a server-side exactly-once guarantee. Choose and document at-most-once or best-effort delivery, and define an atomic claim/lease flow if duplicate suppression is required.
+- **Medium — the query includes arbitrarily stale reminders.** It checks only that the reminder window has opened; it has no upper bound at `due_date` or a grace-window cutoff. A todo can therefore notify days after its due date. Choose the intended late-notification policy and align the query, user flow, and boundary tests.
+- **Medium — API validation and shared types are incomplete.** PRP 01's `UpdateTodoInput` does not include `last_notification_sent`, although this PRP requires clients to update it through PUT. This PRP also does not specify server validation for the seven allowed `reminder_minutes` values or reject a reminder without a due date; UI disabling alone can be bypassed.
+
+**Questions for the owner:**
+- Is delivery intended to be at-most-once or best-effort, and should late reminders fire after the due date? What grace period applies?
+- Should notification stamps use the existing todo PUT contract or a dedicated claim/acknowledgement endpoint?
+- Must the API reject unsupported offsets and reminders without due dates, in addition to enforcing those rules in the UI?
+
+**Testing gaps:** Add tests for permission restoration after reload and permission revocation, simultaneous/overlapping polls, reminders after the due date and chosen grace boundary, invalid reminder offsets, and API updates that stamp `last_notification_sent` without accidentally clearing or overwriting it.
+
+**Cross-PRP follow-ups:**
+- **Person 1 (PRP 01):** Align `UpdateTodoInput` and PUT handling with the notification-stamp contract; define ownership/validation for that field and ensure due-date/reminder edits reset it without racing a notification stamp. Specify one due-date storage format that SQLite comparisons can interpret consistently as Singapore time.
+- **Person 3 (PRP 07):** Templates can carry reminder settings while due dates are calculated from an optional offset. Define whether a reminder template without a due-date offset is rejected or has its reminder cleared, so created todos cannot have an unanchored reminder.
+- **Person 4 (PRP 06):** Include tag association writes in the recurrence transaction/consistency contract, since recurring instances copy tags through the tag system.
 
 ---
 
