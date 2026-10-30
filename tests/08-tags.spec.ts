@@ -56,6 +56,100 @@ test('multiple tags can be selected on creation and detached independently', asy
   await expect(row.getByRole('button', { name: 'Second', exact: true })).toBeVisible();
 });
 
+test('full task editor saves, cancels and clears tags without changing unrelated task details', async ({ page, request }, testInfo) => {
+  await page.goto('/');
+  const row = page.getByTestId('task-row').filter({ has: page.getByRole('heading', { name: 'Team meeting', exact: true }) });
+  await row.getByRole('button', { name: 'Edit Team meeting', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit task', exact: true });
+  const selection = dialog.getByRole('group', { name: 'Tags', exact: true });
+  await expect(selection.getByRole('button', { name: 'Work', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await selection.getByRole('button', { name: 'Personal', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(row.getByRole('button', { name: 'Personal', exact: true })).toHaveCount(0);
+  await row.getByRole('button', { name: 'Edit Team meeting', exact: true }).click();
+  await expect(selection.getByRole('button', { name: 'Personal', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await selection.getByRole('button', { name: 'Personal', exact: true }).click();
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('full-editor-tags.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(row.getByRole('button', { name: 'Personal', exact: true })).toBeVisible();
+  await expect(row.getByRole('button', { name: 'Edit Team meeting', exact: true })).toBeEnabled();
+  await page.reload();
+  await expect(row.getByRole('button', { name: 'Work', exact: true })).toBeVisible();
+  await expect(row.getByRole('button', { name: 'Personal', exact: true })).toBeVisible();
+  const saved = (await (await request.get('/api/todos')).json()).find((todo: { title: string }) => todo.title === 'Team meeting');
+  expect(saved.priority).toBe('high');
+  expect(Date.parse(saved.due_date)).toBe(Date.parse('2030-01-02T18:00:00Z'));
+  expect(saved.subtasks[0].title).toBe('Prepare presentation');
+  await row.getByRole('button', { name: 'Edit Team meeting', exact: true }).click();
+  await selection.getByRole('button', { name: 'Work', exact: true }).click();
+  await selection.getByRole('button', { name: 'Personal', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(row.getByRole('button', { name: 'Edit Team meeting', exact: true })).toBeEnabled();
+  await page.reload();
+  await expect(row).toBeVisible();
+  await expect(row.locator('.task-tags .tag-pill')).toHaveCount(0);
+});
+
+test('optimistic tagged creation remains visible under its tag filter until persisted', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Filter by tag').selectOption({ label: 'Work' });
+  await page.locator('.composer').getByRole('button', { name: 'Work', exact: true }).click();
+  await page.getByLabel('New task title').fill('Pending tagged creation');
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/todos', async (route) => {
+    if (route.request().method() === 'POST') await gate;
+    await route.continue();
+  });
+  try {
+    await page.getByRole('button', { name: 'Add task', exact: true }).click();
+    const row = page.getByTestId('task-row').filter({ has: page.getByRole('heading', { name: 'Pending tagged creation', exact: true }) });
+    await expect(row).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Work', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add task', exact: true })).toBeDisabled();
+    release();
+    await expect(page.getByLabel('New task title')).toHaveValue('');
+    await page.reload();
+    await page.getByLabel('Filter by tag').selectOption({ label: 'Work' });
+    await expect(row.getByRole('button', { name: 'Work', exact: true })).toBeVisible();
+  } finally {
+    release();
+    await page.unroute('**/api/todos');
+  }
+});
+
+test('failed optimistic tagged creation rolls back and preserves the draft for retry', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Filter by tag').selectOption({ label: 'Work' });
+  await page.locator('.composer').getByRole('button', { name: 'Work', exact: true }).click();
+  await page.getByLabel('New task title').fill('Retry tagged creation');
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/todos', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await gate;
+    await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Creation failed. Please retry.' }) });
+  });
+  try {
+    await page.getByRole('button', { name: 'Add task', exact: true }).click();
+    const row = page.getByTestId('task-row').filter({ has: page.getByRole('heading', { name: 'Retry tagged creation', exact: true }) });
+    await expect(row).toBeVisible();
+    release();
+    await expect(page.getByRole('main').getByRole('alert')).toContainText('Creation failed');
+    await expect(row).toHaveCount(0);
+    await expect(page.getByLabel('New task title')).toHaveValue('Retry tagged creation');
+    await expect(page.locator('.composer').getByRole('button', { name: 'Work', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.unroute('**/api/todos');
+    await page.getByRole('button', { name: 'Add task', exact: true }).click();
+    await expect(page.getByLabel('New task title')).toHaveValue('');
+    await expect(row.getByRole('button', { name: 'Work', exact: true })).toBeVisible();
+  } finally {
+    release();
+    await page.unroute('**/api/todos');
+  }
+});
+
 test('API validates input, protects both association owners, and handles duplicate operations', async ({ request, account }) => {
   const tag = await createTag(request, 'API tag', '#123456');
   const todo = await createTodo(request, 'API todo');

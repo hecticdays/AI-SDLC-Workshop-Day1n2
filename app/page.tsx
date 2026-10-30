@@ -106,6 +106,7 @@ export default function Home() {
   const [editingDetails, setEditingDetails] = useState<Todo | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editPriority, setEditPriority] = useState<Priority>('medium');
+  const [editTags, setEditTags] = useState<number[]>([]);
   const [editDueLocal, setEditDueLocal] = useState('');
   const [editRecurring, setEditRecurring] = useState(false);
   const [editRecurrence, setEditRecurrence] = useState<RecurrencePattern>('weekly');
@@ -126,6 +127,7 @@ export default function Home() {
     const allowed = new Set(nextTags.map((tag) => tag.id));
     setFilters((current) => current.tagId !== 'all' && !allowed.has(current.tagId) ? { ...current, tagId: 'all' } : current);
     setNewTags((current) => current.filter((id) => allowed.has(id)));
+    setEditTags((current) => current.filter((id) => allowed.has(id)));
     setEditingTodo((current) => current ? nextTodos.find((todo) => todo.id === current.id) ?? null : null);
   }
 
@@ -204,7 +206,8 @@ export default function Home() {
       id: -Date.now(), user_id: user?.userId ?? 0, title: input.title, completed: false,
       due_date: input.due_date, priority: input.priority, is_recurring: input.is_recurring,
       recurrence_pattern: input.recurrence_pattern, reminder_minutes: input.reminder_minutes,
-      last_notification_sent: null, created_at: getSingaporeNow().toISOString(), updated_at: null, tags: [], subtasks: [],
+      last_notification_sent: null, created_at: getSingaporeNow().toISOString(), updated_at: null,
+      tags: tags.filter((tag) => input.tag_ids.includes(tag.id)), subtasks: [],
     };
     setTodos((current) => [...current, optimistic]);
     await perform(async () => {
@@ -223,6 +226,7 @@ export default function Home() {
     setEditingDetails(todo);
     setEditTitle(todo.title);
     setEditPriority(todo.priority);
+    setEditTags((todo.tags ?? []).map((tag) => tag.id));
     setEditDueLocal(isoToLocalDateTime(todo.due_date));
     setEditRecurring(todo.is_recurring);
     setEditRecurrence(todo.recurrence_pattern ?? 'weekly');
@@ -234,11 +238,11 @@ export default function Home() {
     if (!editingDetails) return;
     const original = editingDetails;
     const input = {
-      title: editTitle.trim(), priority: editPriority, due_date: localDateTimeToIso(editDueLocal),
+      title: editTitle.trim(), priority: editPriority, tag_ids: editTags, due_date: localDateTimeToIso(editDueLocal),
       is_recurring: editRecurring, recurrence_pattern: editRecurring ? editRecurrence : null,
       reminder_minutes: editReminder,
     };
-    const optimistic = { ...original, ...input };
+    const optimistic = { ...original, ...input, tags: tags.filter((tag) => input.tag_ids.includes(tag.id)) };
     setTodos((current) => current.map((todo) => todo.id === original.id ? optimistic : todo));
     setEditingDetails(null);
     await perform(async () => {
@@ -449,6 +453,10 @@ export default function Home() {
       <form className="todo-edit-form" onSubmit={(event) => void saveTodoEdit(event)}>
         <label>Task title<input aria-label="Edit todo title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} required /></label>
         <label>Priority<select aria-label="Edit todo priority" value={editPriority} onChange={(event) => setEditPriority(event.target.value as Priority)}><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+        <fieldset className="todo-edit-tags" disabled={busy}><legend>Tags</legend><div className="tag-selector">
+          {tags.map((tag) => <TagPill key={tag.id} tag={tag} selected={editTags.includes(tag.id)} onClick={() => setEditTags((current) => current.includes(tag.id) ? current.filter((id) => id !== tag.id) : [...current, tag.id])} />)}
+          {tags.length === 0 && <span className="muted">No tags yet.</span>}
+        </div></fieldset>
         <label>Due date · Singapore time<input aria-label="Edit todo due date" type="datetime-local" value={editDueLocal} onChange={(event) => setEditDueLocal(event.target.value)} /></label>
         <label className="todo-toggle"><input type="checkbox" checked={editRecurring} onChange={(event) => setEditRecurring(event.target.checked)} />Repeat</label>
         {editRecurring && <label>Pattern<select aria-label="Edit todo recurrence pattern" value={editRecurrence} onChange={(event) => setEditRecurrence(event.target.value as RecurrencePattern)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>}
