@@ -2,6 +2,76 @@
 
 This document provides a comprehensive checklist for evaluating the completeness of the Todo App implementation, including all core features, testing, and deployment to cloud platforms.
 
+## Person 3: PRP Review
+
+**Reviewed:** 2026-10-30. **Scope:** [PRP 05 - Subtasks & Progress Tracking](PRPs/05-subtasks-progress.md) and [PRP 07 - Template System](PRPs/07-template-system.md), as assigned in [ASSIGNMENTS.md](ASSIGNMENTS.md).
+
+**Result:** Both PRPs have useful user flows and acceptance criteria, but need the clarifications below before implementation. This is a requirements review, not verification of working software: this repository has no application source, database, or executable tests. Existing implementation checkboxes remain unchanged.
+
+### PRP 05: Subtasks & Progress Tracking
+
+**User flows:** Adding, toggling, deleting, expanding/collapsing, and parent deletion are described. Independence between parent and checklist completion is explicit. The API supports renaming, but there is no rename interaction or acceptance test; decide whether renaming belongs in v1.
+
+**Technical requirements and findings:**
+
+| ID | Priority | Finding and Evidence | Recommended Resolution / Discriminating Check |
+|---|---|---|---|
+| P3-05-01 | High | In PRP 05's API examples, PUT only comments on ownership and DELETE performs no ownership lookup. The declared `subtaskDB.update/delete` signatures also take no user ID. The prose requires authorization, but copying these examples would not enforce it. | Specify the actual subtask-to-todo ownership lookup or user-scoped mutation contract. For each POST/PUT/DELETE route, test unauthenticated 401, foreign-owned/missing resource 404, and no database changes after rejection. |
+| P3-05-02 | High | POST calls `title.trim()` without checking its runtime type; PUT forwards arbitrary JSON to the database helper without demonstrating the required blank-title rejection. Non-boolean completion values, malformed JSON, and invalid path IDs have no defined handling. | Define runtime schemas, allowed update fields, positive integer IDs, and consistent 400 responses. Test null, arrays, numeric titles, whitespace, invalid completion values, and empty updates. |
+| P3-05-03 | Medium | The edge cases require optimistic toggles, while the UI examples wait for fetch and refresh. They do not inspect HTTP errors, preserve a failed add, or roll back changes. Optimism alone also cannot guarantee the last user intent when requests arrive out of order. | Choose per-row serialization/pending controls or a versioned update policy; define visible errors and rollback/retry behavior. Delay and fail requests in tests, then verify the final checkbox and server value agree. |
+| P3-05-04 | Medium | `MAX(position) + 1` does not specify the empty-list default or deterministic tie handling. The shared progress function has no module location; importing its runtime implementation from `lib/db.ts` into the UI would cross the server-only database boundary. | Define `COALESCE(MAX(position), -1) + 1`, stable ordering, and a client-safe home for progress logic. Test first insert, deletion gaps, and subsequent insertion; verify client imports do not load SQLite. |
+
+**Edge cases:** Zero subtasks, deleting the last incomplete item, cascade deletion, whitespace titles, and cross-user access are covered in prose. Add reload persistence, malformed requests, network failures, and deterministic rapid-toggle behavior. Verify foreign keys on the actual test connection; an absent UI row alone does not prove cascade deletion.
+
+**Acceptance and testing gaps:**
+
+- Add a rename decision and corresponding acceptance criteria if retained.
+- Test both directions of parent/checklist independence, including an already-completed parent with an incomplete checklist.
+- Keep the listed progress unit tests; add API tests for authorization, input validation, first position, ordering, and persistence after reload.
+- Extend E2E checks for failure recovery, last-subtask deletion hiding the progress display, and accessible checkbox/delete/expand controls.
+- Agree a representative dataset and timing method before asserting the under-300ms API and immediate-render targets. Coverage cannot be measured until tests and source exist.
+
+### PRP 07: Template System
+
+**User flows:** Save, quick use, manager use, and confirmed deletion are described. Snapshot semantics and exclusion of tags/concrete due dates are clear. However, the draft checklist editor and due-date-offset capture are not specified, so the complete recurring-template save flow cannot yet be followed from the supplied UI example.
+
+**Technical requirements and findings:**
+
+| ID | Priority | Finding and Evidence | Recommended Resolution / Discriminating Check |
+|---|---|---|---|
+| P3-07-01 | High | The use example calls `subtaskDB.create({ todo_id, title, position })` and `findAllByTodo`, but PRP 05 defines `create(todoId, data)` and `findByTodoId`. PRP 07 normalizes positions on save despite its lossless title/position round-trip test. | Adopt one shared helper contract and decide whether fidelity means exact numeric positions or relative order. Test a checklist with position gaps saved and instantiated through that contract. |
+| P3-07-02 | High | Todo creation occurs before checklist parsing/insertion, with no transaction. A later insert failure can leave a partial todo. `JSON.parse` success does not ensure an array of valid checklist entries: `null`, `{}`, or `[null]` can still fail after the parent is created. | Validate decoded shape and entries before mutation; atomically create the todo and all subtasks. Preserve the documented empty-checklist fallback for malformed stored JSON and decide the policy for valid JSON with invalid shape. Inject a second-insert failure and assert no partial parent or children remain. |
+| P3-07-03 | High | PRP 03 requires recurring todos to have due dates. PRP 07 recommends rejecting recurring templates without an offset, but its POST example does not enforce this and its save modal never submits an offset. PRP 01 also requires a due date at least one minute in the future. | Choose save-time rejection as a concrete rule, define an offset input or conversion from the draft due date, and revalidate on use. Test missing, zero, negative, fractional, and invalid offsets with a fixed Singapore clock, including crossing midnight. |
+| P3-07-04 | High | Casting request JSON to `CreateTemplateDto` does not validate names, priorities, recurrence/reminder enums, or nested subtask titles. A reminder can be saved without an offset and instantiated without a due date. | Share the owning features' runtime validation rules on create/update/use. Decide reject-versus-clear for reminders without due dates with Person 2. Test malformed payloads and corrupt stored templates without partial writes. |
+| P3-07-05 | Medium | PUT is listed but has no update DTO, edit flow, validation, or tests in PRP 07. Feature 07 below additionally expects template editing and category filtering, neither specified by the PRP's UI flow. | Explicitly include these behaviors and acceptance tests, or agree their deferral and align the checklist. Define omitted versus null fields and snapshot isolation when an update occurs. |
+| P3-07-06 | Medium | The PRP explicitly overrides the user guide's exclusion of subtasks. Template actions also lack specified pending/error/retry behavior; duplicate submissions can create unintended copies. | Agree checklist capture as authoritative and correct the guide in a follow-up. Specify pending controls and failure recovery while preserving intentional repeated use. Test delayed/failed save, use, and delete requests. |
+
+**Edge cases:** Duplicate names, deletion races, no subtasks, malformed stored JSON, and snapshot independence are addressed. Add structurally invalid JSON, partial database failures, repeated intentional use versus duplicate clicks, invalid offsets, and cross-user updates/deletes. Clarify whether use that has already read a template may finish when deletion races with it.
+
+**Acceptance and testing gaps:**
+
+- Add integration tests for all five routes: unauthenticated 401, foreign-owned/missing IDs 404, user-scoped lists, invalid bodies 400, and no unauthorized mutation.
+- Test transaction rollback and shape validation separately from JSON syntax fallback; serialization-only unit tests cannot demonstrate safe template instantiation.
+- Verify two uses produce distinct IDs, fresh incomplete todos/subtasks, preserved checklist order, no tags, and no changes to the template or earlier instances after later edits/deletion.
+- Complete the E2E draft-checklist and recurring-offset save flows; verify displayed Singapore due dates against a fixed clock rather than assuming a `Z` timestamp is displayed correctly.
+- Add empty-library, duplicate-name, accessible modal/focus, failure recovery, and 50+ template / 20+ subtask layout checks. Define how the under-300ms target is measured.
+
+### Questions and Cross-PRP Handoffs
+
+These are recorded handoffs, not completed decisions or notifications to other team members.
+
+| Owner | Dependency / Question | Required Agreement |
+|---|---|---|
+| Person 1 (PRP 01) | How does an unsaved todo acquire checklist entries for template capture? Will every todo response include ordered subtasks even when collapsed? | Define draft checklist state, nested response shape, database foreign-key initialization, shared creation validation, and transaction participation. |
+| Person 1 (PRP 02) | Will template save/update/use share the priority validator and medium default? | Reuse the same allowed values and invalid-value response. |
+| Person 2 (PRPs 03/04) | Should recurring instances copy a checklist, and should copied entries reset? Are reminders without due-date offsets rejected or cleared? | Agree checklist recurrence semantics, allowed reminder values, recurrence invariants, and offset validation before implementing template use. |
+| Person 4 (PRP 08) | Search requires nested subtask titles. How do subtask changes and template use refresh the searched collection? | Verify collapsed checklist matches, renamed/deleted title refresh, and immediately searchable template-created subtasks without leaking another user's data. |
+| Person 5 (PRP 09) | Do imported checklist entries follow the same title/order validation, and are templates intentionally excluded from portability? | Align subtask validation/order preservation and explicitly document the template export/import boundary. |
+| Person 5 (PRP 11) | How will two-user sessions be provisioned for API tests? | Provide reusable authenticated fixtures for 401/404 and unchanged-database authorization assertions on subtask and template routes. |
+| Person 3 | Resolve P3-07-01 jointly across the two owned PRPs; settle rename/edit/filter scope and the guide conflict. | Keep one canonical checklist contract and synchronize PRPs, guide, and evaluation criteria after decisions. |
+
+**Review completion:** User flows, technical requirements, edge cases, acceptance criteria, and testing requirements reviewed for both assigned PRPs. Open findings and dependency questions are recorded above; implementation readiness and runtime verification remain pending.
+
 ---
 
 ## 📋 Table of Contents
