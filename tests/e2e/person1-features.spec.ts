@@ -32,7 +32,7 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   await page.getByRole('button', { name: 'Add task' }).click();
   await expect(page.getByText('Prepare evaluation demo')).toBeVisible();
   await expect(page.getByText('Repeats weekly')).toBeVisible();
-  await expect(page.getByText('Reminder set')).toBeVisible();
+  await expect(page.getByLabel('Reminder 1h before due')).toBeVisible();
 
   const created = await page.request.get('/api/todos');
   expect(created.ok()).toBe(true);

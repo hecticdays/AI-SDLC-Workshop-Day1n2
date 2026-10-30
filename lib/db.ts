@@ -417,10 +417,12 @@ export function createStore(database: Database.Database) {
         if (parsed.due_date && singaporeInstant(parsed.due_date).getTime() < getSingaporeNow().getTime() + 60_000) {
           throw new DataError('Due date must be at least one minute in the future', 400);
         }
+        const dueDate = next.due_date ? singaporeInstant(next.due_date).toISOString() : null;
+        const reminderChanged = dueDate !== existing.due_date || next.reminder_minutes !== existing.reminder_minutes;
         database.prepare(`UPDATE todos SET title = ?, priority = ?, completed = ?, due_date = ?, is_recurring = ?,
-          recurrence_pattern = ?, reminder_minutes = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
-          .run(next.title, next.priority, Number(next.completed), next.due_date ? singaporeInstant(next.due_date).toISOString() : null,
-            Number(next.is_recurring), next.recurrence_pattern, next.reminder_minutes, getSingaporeNow().toISOString(), id, userId);
+          recurrence_pattern = ?, reminder_minutes = ?, last_notification_sent = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
+          .run(next.title, next.priority, Number(next.completed), dueDate, Number(next.is_recurring), next.recurrence_pattern,
+            next.reminder_minutes, reminderChanged ? null : existing.last_notification_sent, getSingaporeNow().toISOString(), id, userId);
         if (parsed.tag_ids !== undefined) tags.replaceForTodo(id, parsed.tag_ids, userId);
         if (!existing.completed && next.completed && next.is_recurring && next.due_date && next.recurrence_pattern &&
           !database.prepare('SELECT todo_id FROM recurrence_generations WHERE todo_id = ?').get(id)) {
@@ -438,6 +440,22 @@ export function createStore(database: Database.Database) {
     delete(id: number, userId: number) {
       requireTodo(id, userId);
       database.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?').run(id, userId);
+    },
+    claimDueReminders(userId: number, now = getSingaporeNow()): Todo[] {
+      return database.transaction(() => {
+        const nowMs = now.getTime();
+        const sentAt = now.toISOString();
+        const due = (database.prepare(`SELECT * FROM todos WHERE user_id = ? AND completed = 0 AND due_date IS NOT NULL
+          AND reminder_minutes IS NOT NULL AND last_notification_sent IS NULL ORDER BY due_date, id`).all(userId) as Todo[])
+          .filter((todo) => {
+            const dueMs = Date.parse(todo.due_date!);
+            return dueMs - todo.reminder_minutes! * 60_000 <= nowMs && nowMs <= dueMs;
+          });
+        const claim = database.prepare(`UPDATE todos SET last_notification_sent = ?
+          WHERE id = ? AND user_id = ? AND last_notification_sent IS NULL`);
+        return due.filter((todo) => claim.run(sentAt, todo.id, userId).changes === 1)
+          .map((todo) => ({ ...todo, completed: false, is_recurring: Boolean(todo.is_recurring), last_notification_sent: sentAt }));
+      }).immediate();
     },
   };
 

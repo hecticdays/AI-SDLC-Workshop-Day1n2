@@ -165,6 +165,8 @@ h1 { font-size: 34px; line-height: 1.15; font-weight: 600; }
 .priority.high > span { background: #d65b57; }
 .priority.low > span { background: #437dc2; }
 .recurrence-label, .reminder-label { padding: 2px 6px; color: var(--muted); background: var(--field); border-radius: 3px; }
+.notification-toggle.enabled { color: #166534; background: #dcfce7; border-color: #86efac; opacity: 1; }
+[data-theme="dark"] .notification-toggle.enabled { color: #bbf7d0; background: #14532d; border-color: #22c55e; }
 .subtask-count { display: flex; align-items: center; gap: 3px; }
 .task-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; max-width: 210px; padding-top: 3px; }
 .edit-tags { margin-top: -3px; }

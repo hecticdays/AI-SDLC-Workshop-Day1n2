@@ -230,7 +230,7 @@ test('proxy protects pages and remote API matchers using canonical tokens withou
     delete process.env.DEMO_MODE;
     const { NextRequest } = await import('next/server');
     const { proxy, config } = await import('../proxy');
-    assert.deepEqual(config.matcher, ['/', '/calendar/:path*', '/api/todos/:path*', '/api/holidays/:path*']);
+    assert.deepEqual(config.matcher, ['/', '/calendar/:path*', '/api/todos/:path*', '/api/holidays/:path*', '/api/notifications/:path*']);
     for (const path of ['/', '/calendar', '/calendar/week']) {
       const response = await proxy(new NextRequest(`http://localhost:3000${path}`));
       assert.equal(response.status, 307);

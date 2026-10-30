@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import Link from 'next/link';
-import { Bookmark, CalendarDays, Check, ChevronDown, ChevronRight, Circle, CircleCheck, FolderOpen,
+import { Bell, BellRing, Bookmark, CalendarDays, Check, ChevronDown, ChevronRight, Circle, CircleCheck, FolderOpen,
   Layers3, LoaderCircle, Moon, Pencil, Plus, Search, SlidersHorizontal, Sun, Tag as TagIcon, Trash2, X } from 'lucide-react';
 import type { Priority, RecurrencePattern, Subtask, Tag, Template, Todo } from '@/lib/db';
 import { calculateProgress, parseTemplateSubtasks } from '@/lib/progress';
@@ -12,6 +12,8 @@ import { applyFilters, DEFAULT_FILTER_STATE, deletePreset, hasActiveFilters, loa
   type FilterPreset, type FilterState } from '@/lib/filters';
 import { formatSingaporeDate, getSingaporeNow, singaporeInstant } from '@/lib/timezone';
 import { useDebounce } from '@/lib/hooks/useDebounce';
+import { useNotifications } from '@/lib/hooks/useNotifications';
+import { REMINDER_LABELS, reminderLabel } from '@/lib/reminders';
 
 interface CurrentUser { userId: number; username: string; demo: boolean }
 interface Confirmation { title: string; text: string; action: () => Promise<void> }
@@ -103,7 +105,7 @@ function ScheduleFields({ value, onChange, disabled, concreteDate = false }: { v
     {concreteDate && <label>Due date (SGT)<input aria-label="New task due date" type="datetime-local" value={value.dueDate} onChange={(event) => onChange({ ...value, dueDate: event.target.value, offset: '' })} /></label>}
     <label>Due in minutes<input aria-label="Due in minutes" type="number" min="1" max="100000000" step="1" value={value.offset} onChange={(event) => onChange({ ...value, offset: event.target.value, dueDate: '' })} /></label>
     <label>Repeat<select aria-label={concreteDate ? 'New task recurrence' : 'Template recurrence'} value={value.recurrence} onChange={(event) => onChange({ ...value, recurrence: event.target.value as DraftSettings['recurrence'] })}><option value="">Does not repeat</option>{(['daily', 'weekly', 'monthly', 'yearly'] as const).map((pattern) => <option key={pattern} value={pattern}>{pattern}</option>)}</select></label>
-    <label>Reminder<select aria-label={concreteDate ? 'New task reminder' : 'Template reminder'} value={value.reminder} onChange={(event) => onChange({ ...value, reminder: event.target.value })}><option value="">No reminder</option>{[[15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [120, '2 hours'], [1440, '1 day'], [2880, '2 days'], [10080, '1 week']].map(([minutes, label]) => <option key={minutes} value={minutes}>{label} before</option>)}</select></label>
+    <label>Reminder<select aria-label={concreteDate ? 'New task reminder' : 'Template reminder'} disabled={!value.dueDate && !value.offset} value={value.reminder} onChange={(event) => onChange({ ...value, reminder: event.target.value })}><option value="">No reminder</option>{[[15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [120, '2 hours'], [1440, '1 day'], [2880, '2 days'], [10080, '1 week']].map(([minutes, label]) => <option key={minutes} value={minutes}>{label} before</option>)}</select></label>
   </fieldset>;
 }
 
@@ -168,6 +170,7 @@ export default function Home() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const notifications = useNotifications(setError);
   const [busy, setBusy] = useState(false);
   const [filters, setFilters] = useState<FilterState>({ ...DEFAULT_FILTER_STATE });
   const [immediateSearch, setImmediateSearch] = useState<string | null>(null);
@@ -439,6 +442,14 @@ export default function Home() {
       <div className="header-right">
         {user?.demo && <span className="demo-label">Local demo</span>}
         {user && <AccountControls demo={user.demo} />}
+        {user && <button type="button" className={`button secondary notification-toggle ${notifications.permission === 'granted' ? 'enabled' : ''}`}
+          disabled={notifications.permission === 'granted' || notifications.permission === 'unsupported'}
+          title={notifications.permission === 'denied' ? 'Allow notifications in your browser site settings' : undefined}
+          onClick={() => void notifications.requestPermission()}>
+          {notifications.permission === 'granted' ? <BellRing size={16} /> : <Bell size={16} />}
+          {notifications.permission === 'granted' ? 'Notifications On' : notifications.permission === 'denied' ? 'Notifications Blocked'
+            : notifications.permission === 'unsupported' ? 'Notifications Unavailable' : 'Enable Notifications'}
+        </button>}
         <span className="header-date">{now && formatSingaporeDate(now, 'EEE, d MMM')}</span>
         <button className="icon-button" aria-label={dark ? 'Use light theme' : 'Use dark theme'} title={dark ? 'Light theme' : 'Dark theme'}
           onClick={() => { const next = !dark; setDark(next); try { localStorage.setItem('todo-app:theme', next ? 'dark' : 'light'); } catch { setError('Theme preference could not be saved.'); } }}>
@@ -521,7 +532,7 @@ export default function Home() {
                 <div className="task-meta"><span className={`priority ${todo.priority}`}><span />{todo.priority}</span>
                   {todo.due_date && <time dateTime={todo.due_date}>{formatSingaporeDate(todo.due_date, 'd MMM, HH:mm')}</time>}
                   {todo.is_recurring && <span className="recurrence-label">Repeats {todo.recurrence_pattern}</span>}
-                  {todo.reminder_minutes !== null && <span className="reminder-label">Reminder set</span>}
+                  {todo.reminder_minutes !== null && <span className="reminder-label" aria-label={`Reminder ${reminderLabel(todo.reminder_minutes)} before due`}>🔔 {reminderLabel(todo.reminder_minutes)}</span>}
                 </div>
                 <SubtaskList todo={todo} busy={busy} onAction={perform} onChanged={refresh} />
               </div>
@@ -586,7 +597,7 @@ export default function Home() {
         <label>Due date · Singapore time<input aria-label="Edit todo due date" type="datetime-local" value={editDueLocal} onChange={(event) => setEditDueLocal(event.target.value)} /></label>
         <label className="todo-toggle"><input type="checkbox" checked={editRecurring} onChange={(event) => setEditRecurring(event.target.checked)} />Repeat</label>
         {editRecurring && <label>Pattern<select aria-label="Edit todo recurrence pattern" value={editRecurrence} onChange={(event) => setEditRecurrence(event.target.value as RecurrencePattern)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>}
-        <label>Reminder<select aria-label="Edit todo reminder" disabled={!editDueLocal} value={editReminder ?? ''} onChange={(event) => setEditReminder(event.target.value ? Number(event.target.value) : null)}><option value="">None</option><option value="5">5 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option><option value="1440">1 day</option><option value="10080">1 week</option><option value="43200">1 month</option></select></label>
+        <label>Reminder<select aria-label="Edit todo reminder" disabled={!editDueLocal} value={editReminder ?? ''} onChange={(event) => setEditReminder(event.target.value ? Number(event.target.value) : null)}><option value="">None</option>{Object.entries(REMINDER_LABELS).map(([minutes, label]) => <option key={minutes} value={minutes}>{label} before</option>)}</select></label>
         <div className="modal-actions"><button className="button secondary" type="button" disabled={busy} onClick={() => setEditingDetails(null)}>Cancel</button><button className="button primary" disabled={busy || !editTitle.trim()}><Check size={16} />Save changes</button></div>
       </form>
     </Modal>}

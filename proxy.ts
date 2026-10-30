@@ -14,5 +14,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/calendar/:path*', '/api/todos/:path*', '/api/holidays/:path*'],
+  matcher: ['/', '/calendar/:path*', '/api/todos/:path*', '/api/holidays/:path*', '/api/notifications/:path*'],
 };
