@@ -1,26 +1,18 @@
-const singaporeFormatter = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Singapore',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+
+export const SINGAPORE_TIMEZONE = 'Asia/Singapore';
 
 export function getSingaporeNow(): Date {
   return new Date();
 }
 
-export function formatSingaporeDate(date: Date, format: 'YYYY-MM-DD' | 'YYYY-MM'): string {
-  const parts = Object.fromEntries(
-    singaporeFormatter.formatToParts(date).map(({ type, value }) => [type, value]),
-  );
-  const month = parts.month;
-  return format === 'YYYY-MM' ? `${parts.year}-${month}` : `${parts.year}-${month}-${parts.day}`;
+export function singaporeInstant(value: string): Date {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)
+    ? new Date(value)
+    : fromZonedTime(value.replace(' ', 'T'), SINGAPORE_TIMEZONE);
 }
 
-export function formatSingaporeDateTime(date: string): string {
-  return new Intl.DateTimeFormat('en-SG', {
-    timeZone: 'Asia/Singapore',
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(date));
+export function formatSingaporeDate(value: string | Date, pattern = 'yyyy-MM-dd'): string {
+  const date = typeof value === 'string' ? singaporeInstant(value) : value;
+  return formatInTimeZone(date, SINGAPORE_TIMEZONE, pattern);
 }

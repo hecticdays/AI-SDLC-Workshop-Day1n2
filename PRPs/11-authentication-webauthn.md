@@ -358,3 +358,42 @@ Test file: `tests/01-authentication.spec.ts` (first in the suite — every other
 - 7-day session expiry is enforced consistently — no session observed valid past 7 days, no session invalidated early
 - 100% of protected-route API requests without a valid session return 401, with no data leakage in the response body
 - Users can register and authenticate from at least two different device/authenticator combinations without errors
+
+## Person 5 Evaluation
+
+**Review status:** Initial requirements review complete; not implementation or security verification. No application source or executable authentication tests exist yet. Findings below are open; existing acceptance checkboxes remain unchecked.
+
+### Findings
+
+| ID | Severity | Evidence and impact | Required clarification or change |
+|---|---|---|---|
+| AUTH-01 | High | A second passkey is required by the stories, edge cases, and acceptance criteria, but registration rejects an existing username and always creates a user. No authenticated enrollment endpoint or flow is defined. | Define enrollment for the current authenticated user, preferably with recent reauthentication. Bind options/verification to `session.userId`; an anonymous caller knowing a username must never attach a credential. Use an existing passkey on a new device to establish access; lost-only-passkey recovery remains out of scope. |
+| AUTH-02 | High | Challenges are keyed only by username in the example. There is no browser/attempt binding, explicit lifetime, or atomic consumption, despite the single-use requirement. Parallel attempts can overwrite state and concurrent verification can reuse it. | Define a short TTL and an unpredictable attempt identifier bound to the initiating browser, operation, and account. Atomically consume the challenge on verification and reject missing, expired, wrong-flow, and replayed attempts. Keep state available across deployed instances/restarts as required by the hosting model. |
+| AUTH-03 | High | `login-verify` selects a credential globally by `response.id` and reads the challenge by submitted username, but never checks that the credential belongs to that username's user. This does not satisfy the username-bound login criterion. | Resolve the account from the bound attempt, require matching `authenticator.user_id`, and create the session only for that account after successful verification. Test user A's challenge with user B's credential and verify no session or counter write occurs. |
+| AUTH-04 | High | The examples leave user-verification policy implicit and do not specify an account-stable WebAuthn user handle. Cookie flags alone also do not define CSRF protection for state-changing endpoints. | Explicitly require user verification in generated options and server verification if biometrics/PIN are the intended assurance. Specify a stable opaque user handle, trusted RP/origin configuration, and origin/CSRF checks for state-changing requests, including enrollment and logout. |
+| AUTH-05 | Medium | SimpleWebAuthn package versions are not pinned, while snippets use version-sensitive browser arguments and the server's `authenticator` verification shape. | Select compatible package versions and validate their TypeScript signatures before copying snippets; use the supported credential/public-key representation and preserve the `counter ?? 0` requirement. |
+| AUTH-06 | Medium | The duplicate-username check occurs before verification. Concurrent registrations can both pass it; separate user/credential inserts can leave an orphan user after failure. Counter/session operations have no concurrency policy either. | Transactionally create user and credential, translate uniqueness conflicts to 409, and define atomic challenge/counter handling so concurrent verification cannot accept a stale assertion. |
+| AUTH-07 | Medium | UI handlers have no exception handling or busy state despite cancellation, unsupported-browser, and retry requirements. The proposed tests assume authentication tests running first will authenticate other suites. | Catch browser/network failures, preserve username, and prevent duplicate submissions. Give each dependent suite an explicit authenticated fixture/setup; Playwright file numbering is not an authentication dependency or shared session guarantee. |
+| AUTH-08 | Medium | JWT signing configuration/claim validation and cookie path are unspecified. Clearing a cookie does not revoke a copied JWT, so 'subsequent requests are unauthenticated' is ambiguous. | Define secret provisioning with no insecure default, accepted algorithm, claim validation, cookie path `/`, and matching deletion attributes. Decide whether logout is browser-local or requires server-side revocation, then test that exact guarantee. |
+| AUTH-09 | Low | The unknown-username response differs from the success path despite the enumeration warning. The five-second metric includes a user-controlled biometric prompt, and the repository targets Next.js 16 while showing middleware conventions that need version confirmation. | Agree on enumeration/rate-limit ownership and generic responses; measure server latency separately from user interaction. Validate the route-protection convention against the selected Next.js version/runtime without importing SQLite into an incompatible runtime. |
+
+### Acceptance and Test Additions Proposed
+
+- [ ] Registration, login, and additional-passkey enrollment have separate, explicit authorization and account-binding contracts.
+- [ ] Reject expired, replayed, missing, wrong-browser, wrong-operation, and cross-account challenges; parallel attempts have deterministic outcomes.
+- [ ] Reject wrong RP ID, wrong origin, invalid signatures, and missing required user verification before any session or counter update.
+- [ ] Registration failure rolls back both rows; concurrent registrations produce one account/credential and a controlled conflict response.
+- [ ] Preserve the existing zero-counter compatibility tests; add successful counter update and concurrent/stale assertion rejection tests using the selected library's behavior.
+- [ ] Verify cookie HttpOnly, SameSite, production Secure, path, expiry, and deletion attributes; reject malformed claims, tampered signatures, and expired JWTs.
+- [ ] Prove unauthenticated API requests return JSON 401, while protected pages redirect. Test cross-user resource access with two independent authenticated contexts.
+- [ ] Enroll a second virtual authenticator only after authenticating the account; verify either passkey works and anonymous enrollment fails.
+- [ ] Cancellation, unavailable WebAuthn, network failure, and duplicate clicks leave a retryable login UI without losing the username.
+- [ ] Each dependent suite creates or loads its own valid authenticated state without relying on authentication test-file execution order.
+
+### Questions and Cross-PRP Handoffs
+
+- **Persons 1-4 (PRPs 01-10):** Agree on `getSession(): Promise<Session | null>` and session-derived ownership before implementing protected routes. Each resource query must check ownership, including child/association operations; page redirects are not API authorization.
+- **Person 1 (PRP 10):** Confirm `/calendar` uses the same session contract and unauthenticated redirect behavior as `/`.
+- **All test owners:** Use shared authentication fixtures and separate user contexts for isolation; virtual authenticator setup must be available per relevant browser context.
+- **Team/security/deployment owner:** Confirm library versions, RP ID/origin per environment, JWT secret provisioning, challenge storage, rate limiting, and whether logout requires revocation. These remain decisions, not implemented guarantees.
+- **Stakeholder decision:** Account recovery is explicitly excluded. Document the lockout risk before release and distinguish authenticated additional-passkey enrollment from recovery after all passkeys are lost.

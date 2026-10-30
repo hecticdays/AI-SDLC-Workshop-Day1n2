@@ -1,5 +1,7 @@
 # Search & Filtering
 
+**Person 4 status:** Implemented and verified on 2026-10-30. See [EVALUATION.md](../EVALUATION.md) for evidence and cross-owner handoffs. This PRP is authoritative for search scope: todo/subtask titles are searched; tag names are selected using the separate tag filter, not searched as text.
+
 Client-side search and multi-criteria filtering over the todo list, with savable filter presets.
 
 **Dependencies**: This is a **client-side, in-memory** feature layered on top of the `todos` list already fetched via [PRP 01: Todo CRUD Operations](./01-todo-crud-operations.md)'s `GET /api/todos` (including nested subtasks from [PRP 05](./05-subtasks-progress.md), priority from [PRP 02](./02-priority-system.md), and tags from [PRP 06](./06-tag-system.md)). It does not require new database tables or server endpoints — only client-side filtering logic plus `localStorage` for saved presets.
@@ -131,6 +133,8 @@ Filters combine with **AND** logic, applied in this order (per `USER_GUIDE.md` "
 
 ```typescript
 // lib/filters.ts
+import { formatSingaporeDate } from '@/lib/timezone';
+
 export function applyFilters(todos: Todo[], filters: FilterState): Todo[] {
   let result = todos;
 
@@ -168,7 +172,7 @@ export function applyFilters(todos: Todo[], filters: FilterState): Todo[] {
   if (filters.dueDateFrom || filters.dueDateTo) {
     result = result.filter((todo) => {
       if (!todo.due_date) return false;
-      const due = todo.due_date.slice(0, 10); // 'YYYY-MM-DD'
+      const due = formatSingaporeDate(todo.due_date);
       if (filters.dueDateFrom && due < filters.dueDateFrom) return false;
       if (filters.dueDateTo && due > filters.dueDateTo) return false;
       return true;
@@ -236,7 +240,11 @@ export function deletePreset(id: string): FilterPreset[] {
 }
 ```
 
-Presets are **per-browser**, not synced server-side, and persist across page refreshes but not across devices/browsers.
+Presets are **per-browser**, not synced server-side, and persist across page refreshes but not across devices/browsers. The tested implementation in `lib/filters.ts` additionally scopes keys to `todo-app:filter-presets:{userId}`, validates the complete persisted shape, and reports write failures. Call `loadPresets(userId)`, `savePreset(userId, preset)`, and `deletePreset(userId, id)`; the earlier snippets illustrate the flow rather than the final storage implementation.
+
+### Cross-feature refresh
+
+After a successful client-side todo/subtask mutation or template use, dispatch `window.dispatchEvent(new Event('todo-app:todos-changed'))`. The main page refetches nested todos and tags and reapplies the current filters. Person 3's routes and template execution remain separate features; tests mutate isolated fixtures to verify this integration contract, including collapsed subtasks, renames, deletions, and new checklist-bearing tasks.
 
 ---
 
@@ -377,58 +385,59 @@ function FilterActions({
 
 ## Acceptance Criteria
 
-- [ ] Search matches todo titles case-insensitively with partial matches.
-- [ ] Search also matches any subtask title belonging to a todo.
-- [ ] Search input is debounced by 300ms; the ✕ clear button bypasses the debounce.
-- [ ] Priority quick filter shows only todos of the selected priority.
-- [ ] Tag quick filter (when tags exist) shows only todos with the selected tag.
-- [ ] Advanced panel toggles open/closed and visually indicates active/inactive state.
-- [ ] Completion status filter correctly separates incomplete vs. completed todos.
-- [ ] Due date range filter only matches todos that have a `due_date`, respecting independently-optional From/To bounds.
-- [ ] All active filters combine with AND logic in the order: search → priority → tag → completion → date range.
-- [ ] "Clear All" resets every filter dimension to its default in one click.
-- [ ] "Save Filter" is only visible when at least one filter is active, and shows an accurate preview of active filters before saving.
-- [ ] Saved presets persist across a page reload (via `localStorage`).
-- [ ] Applying a saved preset sets all five filter dimensions in one action.
-- [ ] Deleting a preset removes it from `localStorage` and from the UI immediately.
-- [ ] Section counters (Overdue/Pending/Completed) reflect post-filter counts; empty sections are hidden.
-- [ ] A distinct empty state is shown when filters produce zero results, versus when the user has zero todos.
-- [ ] Filtering 1000 todos completes in under 100ms.
+- [x] Search matches todo titles case-insensitively with partial matches.
+- [x] Search also matches any subtask title belonging to a todo.
+- [x] Search input is debounced by 300ms; clearing bypasses the debounce.
+- [x] Priority quick filter shows only todos of the selected priority.
+- [x] Tag quick filter (when tags exist) shows only todos with the selected tag.
+- [x] Advanced panel toggles open/closed and visually indicates active/inactive state.
+- [x] Completion status filter correctly separates incomplete vs. completed todos.
+- [x] Due date range filter only matches todos that have a `due_date`, respecting independently-optional From/To bounds and Singapore calendar dates.
+- [x] All active filters combine with AND logic in the order: search, priority, tag, completion, date range.
+- [x] "Clear All" resets every filter dimension to its default in one click.
+- [x] "Save Filter" is only visible when at least one filter is active, and shows an accurate preview of active filters before saving.
+- [x] Saved presets persist across a page reload (via `localStorage`).
+- [x] Applying a saved preset sets all five filter dimensions in one action.
+- [x] Deleting a preset removes it from `localStorage` and from the UI immediately.
+- [x] Section counters (Overdue/Pending/Completed) reflect post-filter counts; empty sections are hidden.
+- [x] A distinct empty state is shown when filters produce zero results, versus when the user has zero todos.
+- [x] Filtering 1000 todos completes in under 100ms.
 
 ---
 
 ## Testing Requirements
 
-Test file: `tests/10-search-filtering.spec.ts`. Use the shared `tests/helpers.ts` (`createTodo()`, `addSubtask()`, `createTag()`) to set up fixture data; virtual WebAuthn authenticator and `Asia/Singapore` timezone come from `playwright.config.ts`.
+Test file: `tests/10-search-filtering.spec.ts`. Shared `tests/helpers.ts` provides `createTodo()`, `createTag()`, isolated account/checklist fixtures, and signed JWT sessions. `playwright.config.ts` sets `Asia/Singapore`. These tests do not claim to verify the not-yet-built WebAuthn flow.
 
 ### E2E tests (Playwright)
 
-- [ ] Search by todo title returns only matching todos.
-- [ ] Search by subtask title returns the parent todo.
-- [ ] Search is case-insensitive (`"MEETING"` matches `"Team meeting"`).
-- [ ] Clearing search via ✕ immediately restores the full list.
-- [ ] Filtering by priority shows only that priority's todos.
-- [ ] Filtering by tag (after creating a tag and assigning it via `createTag()`/tag UI) shows only tagged todos.
-- [ ] Expanding "Advanced" reveals completion status and date range controls.
-- [ ] Completion status filter correctly isolates completed vs. incomplete todos.
-- [ ] Date range filter (`From` + `To`) shows only todos due within range.
-- [ ] Combining search + priority + tag + completion + date range narrows results to the AND intersection.
-- [ ] "Clear All" appears only when a filter is active and resets the view when clicked.
-- [ ] Saving a filter preset, reloading the page, and applying the preset reproduces the same filtered view.
-- [ ] Deleting a saved preset removes its pill and it no longer appears after reload.
-- [ ] Empty-result state renders when a filter combination matches nothing.
+- [x] Search by todo title returns only matching todos.
+- [x] Search by subtask title returns the parent todo.
+- [x] Search is case-insensitive (`"MEETING"` matches `"Team meeting"`).
+- [x] Clearing search immediately restores the full list.
+- [x] Filtering by priority shows only that priority's todos.
+- [x] Filtering by tag (after creating a tag and assigning it via `createTag()`/tag UI) shows only tagged todos.
+- [x] Expanding "Advanced" reveals completion status and date range controls.
+- [x] Completion status filter correctly isolates completed vs. incomplete todos.
+- [x] Date range filter (`From` + `To`) shows only todos due within range.
+- [x] Combining search + priority + tag + completion + date range narrows results to the AND intersection.
+- [x] "Clear All" appears only when a filter is active and resets the view when clicked.
+- [x] Saving a filter preset, reloading the page, and applying the preset reproduces the same filtered view.
+- [x] Deleting a saved preset removes its pill and it no longer appears after reload.
+- [x] Empty-result state renders when a filter combination matches nothing.
+- [x] Deleted-tag fallback, quota errors, distinct empty accounts, shared refresh events and exact debounce timing.
 
 ### Unit tests
 
-- [ ] `applyFilters` — search alone: title match, subtask match, no match, empty query returns all.
-- [ ] `applyFilters` — priority alone: each of `high`/`medium`/`low`/`'all'`.
-- [ ] `applyFilters` — tag alone: matches todo with tag, excludes todo without, `'all'` returns all.
-- [ ] `applyFilters` — completion alone: `incomplete`, `completed`, `all`.
-- [ ] `applyFilters` — date range: `from` only, `to` only, both, excludes todos with `due_date: null`, `from > to` yields empty.
-- [ ] `applyFilters` — combined filters apply as strict AND intersection, in the documented order.
-- [ ] `useDebounce` — value updates only after the delay elapses; rapid successive updates only emit the final value.
-- [ ] `loadPresets` / `savePreset` / `deletePreset` — round-trip through a mocked `localStorage`; `loadPresets` returns `[]` on malformed JSON.
-- [ ] `hasActiveFilters` — `true`/`false` for every dimension individually and for an all-default state.
+- [x] `applyFilters`: title/subtask search, no match, empty query and tag-name exclusion.
+- [x] `applyFilters`: each priority and all priorities.
+- [x] `applyFilters`: tag match, absent tag and all tags.
+- [x] `applyFilters`: incomplete, completed and all statuses.
+- [x] `applyFilters`: independent/both date bounds, null dates, invalid ranges and Singapore/UTC boundaries.
+- [x] `applyFilters`: strict AND intersection and unchanged ordering.
+- [x] `useDebounce` behavior is verified through deterministic Playwright clock tests: delayed updates, rapid typing and immediate clear (browser-level coverage rather than a separate hook unit harness).
+- [x] Preset round-trip with mocked storage, malformed payloads, account isolation and quota failures.
+- [x] `hasActiveFilters`: every dimension and all-default/whitespace states.
 
 ---
 

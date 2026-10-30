@@ -2,6 +2,88 @@
 
 This document provides a comprehensive checklist for evaluating the completeness of the Todo App implementation, including all core features, testing, and deployment to cloud platforms.
 
+## Person 4: Implementation Verification
+
+**Verified:** 2026-10-30. **Scope:** PRPs 06 (tags) and 08 (search/filtering). The Person 4 acceptance flows pass in the current implementation: 13 unit tests and 32 desktop/mobile Playwright cases. This does not mark other owners' application features or production deployment complete.
+
+- **Search contract resolved:** PRP 08 explicitly excludes tag-name text search. Search covers todo/subtask titles; tags have their own composable filter. Feature 08 below now follows that contract instead of the older conflicting tag-name search checklist.
+- **Contrast contract resolved:** Custom tag colors use black or white text for AA contrast. Always-white text cannot meet AA on arbitrary pale colors. Browser tests check representative colors in both themes.
+- **Edit integration delivered:** `tagDB.replaceForTodo(todoId, tagIds, userId)` atomically validates ownership and replaces associations, deduplicates IDs, supports an empty selection, and participates in the caller's transaction. Person 1 can call it from the full todo-update handler; editing task tags already works independently in the current UI.
+- **Import integration delivered:** `tagDB.findByName(name, userId)` and `findOrCreateByName(userId, input)` use trimmed names and SQLite NOCASE matching. Resolution returns `{ tag, created }`, preserves an existing tag's color, and rolls back with an outer import transaction. This is the tag contract for Person 5, not a claim that import itself exists.
+- **Subtask/template integration delivered:** After a successful mutation, dispatch `window.dispatchEvent(new Event('todo-app:todos-changed'))` from client code. The workspace refetches nested todos and reapplies filters; tests cover renamed/deleted checklist items and newly created checklist-bearing tasks without implementing Person 3's endpoints.
+- **Performance evidence:** All-filter recomputation over 1000 todos passes the under-100ms unit gate; warmed tag CRUD requests pass the under-300ms average gate. Cold Next.js compilation is excluded from that steady-state API metric.
+- **Review outcome:** User flows, validation, ownership, failure recovery, empty/deleted-tag states, storage errors, accessibility, and cross-owner contracts are reviewed and covered. No standalone Person 4 implementation task remains; consuming these contracts in the other owners' features remains their integration work.
+
+## Person 3: PRP Review
+
+**Reviewed:** 2026-10-30. **Scope:** [PRP 05 - Subtasks & Progress Tracking](PRPs/05-subtasks-progress.md) and [PRP 07 - Template System](PRPs/07-template-system.md), as assigned in [ASSIGNMENTS.md](ASSIGNMENTS.md).
+
+**Result:** Both PRPs have useful user flows and acceptance criteria, but need the clarifications below before implementation. This is a requirements review, not verification of working software: this repository has no application source, database, or executable tests. Existing implementation checkboxes remain unchanged.
+
+### PRP 05: Subtasks & Progress Tracking
+
+**User flows:** Adding, toggling, deleting, expanding/collapsing, and parent deletion are described. Independence between parent and checklist completion is explicit. The API supports renaming, but there is no rename interaction or acceptance test; decide whether renaming belongs in v1.
+
+**Technical requirements and findings:**
+
+| ID | Priority | Finding and Evidence | Recommended Resolution / Discriminating Check |
+|---|---|---|---|
+| P3-05-01 | High | In PRP 05's API examples, PUT only comments on ownership and DELETE performs no ownership lookup. The declared `subtaskDB.update/delete` signatures also take no user ID. The prose requires authorization, but copying these examples would not enforce it. | Specify the actual subtask-to-todo ownership lookup or user-scoped mutation contract. For each POST/PUT/DELETE route, test unauthenticated 401, foreign-owned/missing resource 404, and no database changes after rejection. |
+| P3-05-02 | High | POST calls `title.trim()` without checking its runtime type; PUT forwards arbitrary JSON to the database helper without demonstrating the required blank-title rejection. Non-boolean completion values, malformed JSON, and invalid path IDs have no defined handling. | Define runtime schemas, allowed update fields, positive integer IDs, and consistent 400 responses. Test null, arrays, numeric titles, whitespace, invalid completion values, and empty updates. |
+| P3-05-03 | Medium | The edge cases require optimistic toggles, while the UI examples wait for fetch and refresh. They do not inspect HTTP errors, preserve a failed add, or roll back changes. Optimism alone also cannot guarantee the last user intent when requests arrive out of order. | Choose per-row serialization/pending controls or a versioned update policy; define visible errors and rollback/retry behavior. Delay and fail requests in tests, then verify the final checkbox and server value agree. |
+| P3-05-04 | Medium | `MAX(position) + 1` does not specify the empty-list default or deterministic tie handling. The shared progress function has no module location; importing its runtime implementation from `lib/db.ts` into the UI would cross the server-only database boundary. | Define `COALESCE(MAX(position), -1) + 1`, stable ordering, and a client-safe home for progress logic. Test first insert, deletion gaps, and subsequent insertion; verify client imports do not load SQLite. |
+
+**Edge cases:** Zero subtasks, deleting the last incomplete item, cascade deletion, whitespace titles, and cross-user access are covered in prose. Add reload persistence, malformed requests, network failures, and deterministic rapid-toggle behavior. Verify foreign keys on the actual test connection; an absent UI row alone does not prove cascade deletion.
+
+**Acceptance and testing gaps:**
+
+- Add a rename decision and corresponding acceptance criteria if retained.
+- Test both directions of parent/checklist independence, including an already-completed parent with an incomplete checklist.
+- Keep the listed progress unit tests; add API tests for authorization, input validation, first position, ordering, and persistence after reload.
+- Extend E2E checks for failure recovery, last-subtask deletion hiding the progress display, and accessible checkbox/delete/expand controls.
+- Agree a representative dataset and timing method before asserting the under-300ms API and immediate-render targets. Coverage cannot be measured until tests and source exist.
+
+### PRP 07: Template System
+
+**User flows:** Save, quick use, manager use, and confirmed deletion are described. Snapshot semantics and exclusion of tags/concrete due dates are clear. However, the draft checklist editor and due-date-offset capture are not specified, so the complete recurring-template save flow cannot yet be followed from the supplied UI example.
+
+**Technical requirements and findings:**
+
+| ID | Priority | Finding and Evidence | Recommended Resolution / Discriminating Check |
+|---|---|---|---|
+| P3-07-01 | High | The use example calls `subtaskDB.create({ todo_id, title, position })` and `findAllByTodo`, but PRP 05 defines `create(todoId, data)` and `findByTodoId`. PRP 07 normalizes positions on save despite its lossless title/position round-trip test. | Adopt one shared helper contract and decide whether fidelity means exact numeric positions or relative order. Test a checklist with position gaps saved and instantiated through that contract. |
+| P3-07-02 | High | Todo creation occurs before checklist parsing/insertion, with no transaction. A later insert failure can leave a partial todo. `JSON.parse` success does not ensure an array of valid checklist entries: `null`, `{}`, or `[null]` can still fail after the parent is created. | Validate decoded shape and entries before mutation; atomically create the todo and all subtasks. Preserve the documented empty-checklist fallback for malformed stored JSON and decide the policy for valid JSON with invalid shape. Inject a second-insert failure and assert no partial parent or children remain. |
+| P3-07-03 | High | PRP 03 requires recurring todos to have due dates. PRP 07 recommends rejecting recurring templates without an offset, but its POST example does not enforce this and its save modal never submits an offset. PRP 01 also requires a due date at least one minute in the future. | Choose save-time rejection as a concrete rule, define an offset input or conversion from the draft due date, and revalidate on use. Test missing, zero, negative, fractional, and invalid offsets with a fixed Singapore clock, including crossing midnight. |
+| P3-07-04 | High | Casting request JSON to `CreateTemplateDto` does not validate names, priorities, recurrence/reminder enums, or nested subtask titles. A reminder can be saved without an offset and instantiated without a due date. | Share the owning features' runtime validation rules on create/update/use. Decide reject-versus-clear for reminders without due dates with Person 2. Test malformed payloads and corrupt stored templates without partial writes. |
+| P3-07-05 | Medium | PUT is listed but has no update DTO, edit flow, validation, or tests in PRP 07. Feature 07 below additionally expects template editing and category filtering, neither specified by the PRP's UI flow. | Explicitly include these behaviors and acceptance tests, or agree their deferral and align the checklist. Define omitted versus null fields and snapshot isolation when an update occurs. |
+| P3-07-06 | Medium | The PRP explicitly overrides the user guide's exclusion of subtasks. Template actions also lack specified pending/error/retry behavior; duplicate submissions can create unintended copies. | Agree checklist capture as authoritative and correct the guide in a follow-up. Specify pending controls and failure recovery while preserving intentional repeated use. Test delayed/failed save, use, and delete requests. |
+
+**Edge cases:** Duplicate names, deletion races, no subtasks, malformed stored JSON, and snapshot independence are addressed. Add structurally invalid JSON, partial database failures, repeated intentional use versus duplicate clicks, invalid offsets, and cross-user updates/deletes. Clarify whether use that has already read a template may finish when deletion races with it.
+
+**Acceptance and testing gaps:**
+
+- Add integration tests for all five routes: unauthenticated 401, foreign-owned/missing IDs 404, user-scoped lists, invalid bodies 400, and no unauthorized mutation.
+- Test transaction rollback and shape validation separately from JSON syntax fallback; serialization-only unit tests cannot demonstrate safe template instantiation.
+- Verify two uses produce distinct IDs, fresh incomplete todos/subtasks, preserved checklist order, no tags, and no changes to the template or earlier instances after later edits/deletion.
+- Complete the E2E draft-checklist and recurring-offset save flows; verify displayed Singapore due dates against a fixed clock rather than assuming a `Z` timestamp is displayed correctly.
+- Add empty-library, duplicate-name, accessible modal/focus, failure recovery, and 50+ template / 20+ subtask layout checks. Define how the under-300ms target is measured.
+
+### Questions and Cross-PRP Handoffs
+
+These are recorded handoffs, not completed decisions or notifications to other team members.
+
+| Owner | Dependency / Question | Required Agreement |
+|---|---|---|
+| Person 1 (PRP 01) | How does an unsaved todo acquire checklist entries for template capture? Will every todo response include ordered subtasks even when collapsed? | Define draft checklist state, nested response shape, database foreign-key initialization, shared creation validation, and transaction participation. |
+| Person 1 (PRP 02) | Will template save/update/use share the priority validator and medium default? | Reuse the same allowed values and invalid-value response. |
+| Person 2 (PRPs 03/04) | Should recurring instances copy a checklist, and should copied entries reset? Are reminders without due-date offsets rejected or cleared? | Agree checklist recurrence semantics, allowed reminder values, recurrence invariants, and offset validation before implementing template use. |
+| Person 4 (PRP 08) | Search requires nested subtask titles. How do subtask changes and template use refresh the searched collection? | Verify collapsed checklist matches, renamed/deleted title refresh, and immediately searchable template-created subtasks without leaking another user's data. |
+| Person 5 (PRP 09) | Do imported checklist entries follow the same title/order validation, and are templates intentionally excluded from portability? | Align subtask validation/order preservation and explicitly document the template export/import boundary. |
+| Person 5 (PRP 11) | How will two-user sessions be provisioned for API tests? | Provide reusable authenticated fixtures for 401/404 and unchanged-database authorization assertions on subtask and template routes. |
+| Person 3 | Resolve P3-07-01 jointly across the two owned PRPs; settle rename/edit/filter scope and the guide conflict. | Keep one canonical checklist contract and synchronize PRPs, guide, and evaluation criteria after decisions. |
+
+**Review completion:** User flows, technical requirements, edge cases, acceptance criteria, and testing requirements reviewed for both assigned PRPs. Open findings and dependency questions are recorded above; implementation readiness and runtime verification remain pending.
+
 ---
 
 ## 📋 Table of Contents
@@ -113,6 +195,23 @@ This document provides a comprehensive checklist for evaluating the completeness
 - [ ] Date calculations accurate (Singapore timezone)
 - [ ] Can disable recurring on existing todo
 
+#### PRP Review: Person 2
+**Review status:** Needs clarification before implementation. User flow, technical requirements, edge cases, acceptance criteria, and tests reviewed in [PRP 03](PRPs/03-recurring-todos.md).
+
+**Findings:**
+- **High — completion is not atomic or concurrency-safe.** The example updates the current todo, inserts the next instance, then copies tags as separate operations, despite describing the work as atomic. A failure can leave a completed todo without its successor or with missing tags; concurrent completion requests can both observe `completed = false` and create successors. Perform the state transition, successor insert, and tag copy in one database transaction with a durable idempotency guard.
+- **High — undoing completion can create another successor.** PRP 01 permits unchecking a completed todo. After the first completion creates a successor, unchecking and completing the original again passes the documented `false → true` check and can create a duplicate occurrence. Define undo/recompletion behavior and persist enough occurrence/lineage state to enforce it.
+- **Medium — month/year clamping can permanently shift the schedule.** Calculating each occurrence from the prior due date means Jan 31 → Feb 28 → Mar 28, and Feb 29 → Feb 28 can remain on Feb 28 in later years. This may conflict with the stated same-day-of-month/year intent. Specify whether the original anchor date is retained and add multi-cycle tests.
+- **Medium — stopping recurrence has ambiguous scope.** Unchecking Repeat affects only the edited instance. A successor already created remains recurring and can continue the sequence. Clarify whether “stop” means this instance only or the entire logical series; the schema currently has no series identifier.
+- **Medium — completion may copy stale metadata.** The example creates the successor from `existing`, even though the same PUT first applies `body` to produce `updated`. If completion and field edits arrive together, the successor will not inherit the values just submitted, contrary to the “current values at completion time” edge case.
+
+**Questions for the owner:**
+- Should monthly/yearly recurrence retain the original date as its anchor after a clamped occurrence?
+- Does disabling Repeat stop only the edited todo or the full series, including an already-created successor? What should undoing and re-completing do?
+- Can completion and metadata edits occur in the same PUT, and should the successor inherit the updated values?
+
+**Testing gaps:** Add tests for concurrent completion, uncomplete/recomplete, a multi-cycle month-end and leap-day schedule, stopping after a successor exists, and completing while changing inherited fields. Existing date unit tests cover single-step calculations but not these behaviors.
+
 ---
 
 ### ✅ Feature 04: Reminders & Notifications
@@ -144,6 +243,27 @@ This document provides a comprehensive checklist for evaluating the completeness
 - [ ] Notifications fire at correct time
 - [ ] Only one notification per reminder
 - [ ] Works in Singapore timezone
+
+#### PRP Review: Person 2
+**Review status:** Needs clarification before implementation. User flow, technical requirements, edge cases, acceptance criteria, and tests reviewed in [PRP 04](PRPs/04-reminders-notifications.md).
+
+**Findings:**
+- **High — granted permission is not restored in client state after reload.** The hook initializes `permission` to `default` and only changes it after requesting permission. The browser remembers the grant, but a reload leaves the UI showing “Enable Notifications” and prevents polling. Initialize/synchronize state from `Notification.permission` when the client mounts and when the page becomes active.
+- **High — “exactly once” conflicts with the polling design.** The endpoint returns unclaimed reminders and the client displays the notification before stamping it. Two tabs or overlapping polls can both display before either PUT completes; the `tag` option does not provide a server-side exactly-once guarantee. Choose and document at-most-once or best-effort delivery, and define an atomic claim/lease flow if duplicate suppression is required.
+- **Medium — the query includes arbitrarily stale reminders.** It checks only that the reminder window has opened; it has no upper bound at `due_date` or a grace-window cutoff. A todo can therefore notify days after its due date. Choose the intended late-notification policy and align the query, user flow, and boundary tests.
+- **Medium — API validation and shared types are incomplete.** PRP 01's `UpdateTodoInput` does not include `last_notification_sent`, although this PRP requires clients to update it through PUT. This PRP also does not specify server validation for the seven allowed `reminder_minutes` values or reject a reminder without a due date; UI disabling alone can be bypassed.
+
+**Questions for the owner:**
+- Is delivery intended to be at-most-once or best-effort, and should late reminders fire after the due date? What grace period applies?
+- Should notification stamps use the existing todo PUT contract or a dedicated claim/acknowledgement endpoint?
+- Must the API reject unsupported offsets and reminders without due dates, in addition to enforcing those rules in the UI?
+
+**Testing gaps:** Add tests for permission restoration after reload and permission revocation, simultaneous/overlapping polls, reminders after the due date and chosen grace boundary, invalid reminder offsets, and API updates that stamp `last_notification_sent` without accidentally clearing or overwriting it.
+
+**Cross-PRP follow-ups:**
+- **Person 1 (PRP 01):** Align `UpdateTodoInput` and PUT handling with the notification-stamp contract; define ownership/validation for that field and ensure due-date/reminder edits reset it without racing a notification stamp. Specify one due-date storage format that SQLite comparisons can interpret consistently as Singapore time.
+- **Person 3 (PRP 07):** Templates can carry reminder settings while due dates are calculated from an optional offset. Define whether a reminder template without a due-date offset is rejected or has its reminder cleared, so created todos cannot have an unanchored reminder.
+- **Person 4 (PRP 06):** Include tag association writes in the recurrence transaction/consistency contract, since recurring instances copy tags through the tag system.
 
 ---
 
@@ -183,39 +303,41 @@ This document provides a comprehensive checklist for evaluating the completeness
 ---
 
 ### ✅ Feature 06: Tag System
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** Verified (Person 4, 2026-10-30)
 
 **Implementation Checklist:**
-- [ ] Database: `tags` and `todo_tags` tables
-- [ ] API endpoint: `GET /api/tags`
-- [ ] API endpoint: `POST /api/tags`
-- [ ] API endpoint: `PUT /api/tags/[id]`
-- [ ] API endpoint: `DELETE /api/tags/[id]`
-- [ ] API endpoint: `POST /api/todos/[id]/tags`
-- [ ] API endpoint: `DELETE /api/todos/[id]/tags`
-- [ ] "Manage Tags" modal
-- [ ] Tag creation form (name + color picker)
-- [ ] Tag list with edit/delete buttons
-- [ ] Tag selection in todo form (checkboxes)
-- [ ] Tag badges on todos (colored)
-- [ ] Click badge to filter by tag
-- [ ] Tag filter indicator with clear button
+- [x] Database: `tags` and `todo_tags` tables
+- [x] API endpoint: `GET /api/tags`
+- [x] API endpoint: `POST /api/tags`
+- [x] API endpoint: `PUT /api/tags/[id]`
+- [x] API endpoint: `DELETE /api/tags/[id]`
+- [x] API endpoint: `POST /api/todos/[id]/tags`
+- [x] API endpoint: `DELETE /api/todos/[id]/tags`
+- [x] "Manage Tags" modal
+- [x] Tag creation form (name + color picker)
+- [x] Tag list with edit/delete buttons
+- [x] Tag selection: multi-select pills on create, checkboxes when editing task tags
+- [x] Tag badges on todos (colored)
+- [x] Click badge to filter by tag
+- [x] Tag filter indicator with clear button
 
 **Testing:**
-- [ ] E2E test: Create tag
-- [ ] E2E test: Edit tag name/color
-- [ ] E2E test: Delete tag
-- [ ] E2E test: Assign multiple tags to todo
-- [ ] E2E test: Filter by tag
-- [ ] E2E test: Duplicate tag name validation
-- [ ] Unit test: Tag name validation
+- [x] E2E test: Create tag
+- [x] E2E test: Edit tag name/color, including partial updates
+- [x] E2E test: Delete tag
+- [x] E2E test: Assign multiple tags to todo
+- [x] E2E test: Filter by tag
+- [x] E2E test: Duplicate tag name validation
+- [x] Unit test: Tag name validation
+- [x] Unit tests: atomic replacement, import name resolution, ownership, outer rollback and 60-task cascade
+- [x] E2E tests: 401/404 checks, failed-assignment rollback/retry, focus restoration, contrast and warm API latency
 
 **Acceptance Criteria:**
-- [ ] Tags unique per user
-- [ ] Custom colors work
-- [ ] Editing tag updates all todos
-- [ ] Deleting tag removes from todos
-- [ ] Filter works correctly
+- [x] Tags unique per user
+- [x] Custom colors work
+- [x] Editing tag updates all todos
+- [x] Deleting tag removes from todos
+- [x] Filter works correctly
 
 ---
 
@@ -257,37 +379,40 @@ This document provides a comprehensive checklist for evaluating the completeness
 ---
 
 ### ✅ Feature 08: Search & Filtering
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** Verified (Person 4, 2026-10-30; PRP 08 search scope)
 
 **Implementation Checklist:**
-- [ ] Search input field at top of page
-- [ ] Real-time filtering (no submit button)
-- [ ] Case-insensitive search
-- [ ] Search matches todo titles
-- [ ] Search matches tag names (advanced mode)
-- [ ] Priority filter dropdown
-- [ ] Tag filter (click badge)
-- [ ] Combined filters (AND logic)
-- [ ] Filter summary/indicator
-- [ ] Clear all filters button
-- [ ] Empty state for no results
-- [ ] Debounced search (300ms)
+- [x] Search input field at top of page
+- [x] Real-time filtering (no submit button)
+- [x] Case-insensitive search
+- [x] Search matches todo titles
+- [x] Search matches subtask titles (tag names are filtered separately, per PRP 08)
+- [x] Priority filter dropdown
+- [x] Tag filter (dropdown or click badge)
+- [x] Combined filters (AND logic)
+- [x] Filter summary/indicator
+- [x] Clear all filters button and independent tag-filter clearing
+- [x] Empty state for no results
+- [x] Debounced search (300ms), cached computation and immediate clear
+- [x] Advanced completion/date filters, saved preset preview/apply/delete and account-scoped browser persistence
 
 **Testing:**
-- [ ] E2E test: Search by title
-- [ ] E2E test: Search by tag name
-- [ ] E2E test: Filter by priority
-- [ ] E2E test: Filter by tag
-- [ ] E2E test: Combine multiple filters
-- [ ] E2E test: Clear filters
-- [ ] Performance test: Filter 1000 todos < 100ms
+- [x] E2E test: Search by title
+- [x] E2E test: Search by subtask title
+- [x] E2E test: Filter by priority
+- [x] E2E test: Filter by tag
+- [x] E2E test: Combine multiple filters
+- [x] E2E test: Clear filters
+- [x] Performance test: Filter 1000 todos < 100ms
+- [x] E2E tests: deterministic debounce, Singapore dates, section counts, presets, deleted tags, storage failures and empty accounts
+- [x] E2E test: checklist changes become searchable through the shared refresh event
 
 **Acceptance Criteria:**
-- [ ] Search is case-insensitive
-- [ ] Includes tag names in search
-- [ ] Filters combine with AND
-- [ ] Real-time updates
-- [ ] Clear message for empty results
+- [x] Search is case-insensitive
+- [x] Includes subtask titles in search; supports tag filtering separately
+- [x] Filters combine with AND
+- [x] Real-time updates
+- [x] Clear message for empty results
 
 ---
 

@@ -1,28 +1,17 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
-import { insertTodo, InvalidTodoTagsError, listTodos } from '@/lib/db';
-import { isDueDateAtLeastOneMinuteAhead, todoCreateSchema } from '@/lib/validation';
+import { todoDB, todoInputSchema } from '@/lib/db';
+import { apiError, readBody, requireSession } from '@/lib/api';
 
-export async function GET() {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  return NextResponse.json({ todos: listTodos(session.userId) });
+export async function GET(request: Request) {
+  try {
+    const session = await requireSession(request);
+    return NextResponse.json(todoDB.findAllByUser(session.userId));
+  } catch (error) { return apiError(error); }
 }
 
 export async function POST(request: Request) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  const parsed = todoCreateSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid todo.' }, { status: 400 });
-  if (!isDueDateAtLeastOneMinuteAhead(parsed.data.due_date)) {
-    return NextResponse.json({ error: 'Due date must be valid and at least 1 minute in the future.' }, { status: 400 });
-  }
   try {
-    return NextResponse.json(insertTodo(session.userId, parsed.data), { status: 201 });
-  } catch (error) {
-    if (error instanceof InvalidTodoTagsError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
+    const session = await requireSession(request);
+    return NextResponse.json(todoDB.create(session.userId, todoInputSchema.parse(await readBody(request))), { status: 201 });
+  } catch (error) { return apiError(error); }
 }

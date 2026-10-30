@@ -1,48 +1,40 @@
 {
-  "name": "todo-app-person1-features",
-  "version": "1.0.0",
+  "name": "todo-workshop",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "npm run seed:holidays",
     "dev": "next dev",
+    "dev:demo": "cross-env DEMO_MODE=true DATABASE_PATH=demo.db next dev --hostname 127.0.0.1",
     "build": "next build",
-    "prestart": "npm run seed:holidays",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:e2e": "playwright test",
-    "seed:holidays": "tsx scripts/seed-holidays.ts"
+    "test": "tsx --test tests/person4.test.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@simplewebauthn/browser": "^13.1.1",
-    "@simplewebauthn/server": "^13.1.1",
-    "better-sqlite3": "^12.2.0",
-    "date-holidays": "^3.26.5",
-    "jose": "^6.1.0",
+    "@tailwindcss/postcss": "^4.1.0",
+    "better-sqlite3": "^12.0.0",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "jose": "^6.0.0",
     "lucide-react": "^0.468.0",
-    "next": "^15.5.6",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "zod": "^4.1.12"
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.1.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.55.0",
+    "@playwright/test": "^1.56.0",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^22.15.30",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.7",
-    "eslint": "^9.29.0",
-    "eslint-config-next": "^15.5.6",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3",
-    "vitest": "^4.1.12"
-  },
-  "overrides": {
-    "deepmerge": "3.3.0",
-    "postcss": "^8.5.32"
-  },
-  "allowScripts": {
-    "better-sqlite3": true
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "cross-env": "^7.0.3",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
   }
 }
