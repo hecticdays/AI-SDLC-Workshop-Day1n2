@@ -1,31 +1,69 @@
 'use client';
 
-import { ArrowLeft, ArrowRight, CalendarDays, Check } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarDays, Layers3, ListTodo, LogOut, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  generateCalendarGrid, monthLabel, parseMonthParam, shiftMonth, todosForSingaporeDate, type CalendarMonth,
+} from '@/lib/calendar';
 import type { Holiday, Todo } from '@/lib/db';
-import { generateCalendarGrid, todosForSingaporeDate } from '@/lib/calendar';
 import { formatSingaporeDate, getSingaporeNow } from '@/lib/timezone';
 
-type CalendarDashboardProps = { initialMonth: { year: number; month: number } };
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MAX_VISIBLE_TODOS = 3;
+
+type CalendarDashboardProps = { initialMonth: CalendarMonth };
 
 async function responseError(response: Response) {
   const body = await response.json().catch(() => ({}));
   return typeof body.error === 'string' ? body.error : 'The request could not be completed.';
 }
 
+function DayModal({ date, todos, holiday, onClose }: {
+  date: string; todos: Todo[]; holiday: Holiday | undefined; onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const element = dialog.current;
+    const previous = document.activeElement as HTMLElement | null;
+    element?.showModal();
+    return () => { element?.close(); previous?.focus(); };
+  }, []);
+
+  return <dialog ref={dialog} className="modal" aria-labelledby={titleId}
+    onCancel={(event) => { event.preventDefault(); onClose(); }}
+    onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="modal-content">
+      <header className="modal-header">
+        <h2 id={titleId}>{new Intl.DateTimeFormat('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'full' }).format(new Date(`${date}T12:00:00+08:00`))}</h2>
+        <button type="button" className="icon-button" aria-label="Close day details" title="Close" onClick={onClose}><X size={20} /></button>
+      </header>
+      {holiday && <p className="day-holiday">{holiday.name}</p>}
+      {todos.length === 0 ? <p className="muted">No tasks due on this day.</p> : <ul className="day-todo-list">
+        {todos.map((todo) => <li key={todo.id}>
+          <span className={`priority ${todo.priority}`}><span />{todo.priority}</span>
+          <span className={todo.completed ? 'completed-title' : undefined}>{todo.title}</span>
+          <span>{todo.completed ? 'Completed' : 'Open'}</span>
+        </li>)}
+      </ul>}
+    </div>
+  </dialog>;
+}
+
 export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
   const router = useRouter();
-  const [month, setMonth] = useState(initialMonth);
+  const [month, setMonth] = useState<CalendarMonth>(initialMonth);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+
   const today = formatSingaporeDate(getSingaporeNow(), 'yyyy-MM-dd');
-  const days = useMemo(() => generateCalendarGrid(month.year, month.month, today), [month.year, month.month, today]);
+  const days = useMemo(() => generateCalendarGrid(month.year, month.month, today), [month, today]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -34,8 +72,8 @@ export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
       setError(null);
       try {
         const [todoResponse, holidayResponse] = await Promise.all([
-          fetch('/api/todos', { signal: controller.signal }),
-          fetch(`/api/holidays?year=${month.year}&month=${month.month}`, { signal: controller.signal }),
+          fetch('/api/todos', { signal: controller.signal, cache: 'no-store' }),
+          fetch(`/api/holidays?year=${month.year}&month=${month.month}`, { signal: controller.signal, cache: 'no-store' }),
         ]);
         if (!todoResponse.ok) throw new Error(await responseError(todoResponse));
         if (!holidayResponse.ok) throw new Error(await responseError(holidayResponse));
@@ -51,21 +89,12 @@ export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
     }
     void load();
     return () => controller.abort();
-  }, [month.year, month.month, retry]);
+  }, [month, retry]);
 
-  function navigateMonth(offset: number) {
-    const next = new Date(Date.UTC(month.year, month.month - 1 + offset, 1));
-    const nextMonth = { year: next.getUTCFullYear(), month: next.getUTCMonth() + 1 };
-    setMonth(nextMonth);
-    router.replace(`/calendar?month=${nextMonth.year}-${String(nextMonth.month).padStart(2, '0')}`);
+  function goToMonth(next: CalendarMonth) {
+    setMonth(next);
     setSelectedDate(null);
-  }
-
-  function goToToday() {
-    const [year, monthValue] = today.split('-').map(Number);
-    setMonth({ year, month: monthValue });
-    router.replace(`/calendar?month=${year}-${String(monthValue).padStart(2, '0')}`);
-    setSelectedDate(null);
+    router.replace(`/calendar?month=${next.year}-${String(next.month).padStart(2, '0')}`);
   }
 
   const holidayByDate = new Map(holidays.map((holiday) => [holiday.date, holiday]));
@@ -77,64 +106,74 @@ export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
     router.refresh();
   }
 
-  return (
-    <main className="app-shell calendar-shell">
-      <header className="topbar">
-        <Link className="brand-lockup" href="/"><span className="brand-mark"><Check size={18} aria-hidden="true" /></span><span>DAYMARK</span></Link>
-        <nav className="top-nav" aria-label="Main navigation"><Link className="nav-link" href="/">Tasks</Link><Link className="nav-link active" href="/calendar"><CalendarDays size={16} aria-hidden="true" /> Calendar</Link></nav>
-        <button className="icon-button" type="button" title="Sign out" aria-label="Sign out" onClick={signOut}>↗</button>
-      </header>
+  return <div className="app-shell">
+    <header className="app-header">
+      <Link href="/" className="brand"><span className="brand-icon"><Layers3 size={22} /></span>Daybook<span className="brand-label">CALENDAR</span></Link>
+      <div className="header-right">
+        <span className="header-date">Asia/Singapore</span>
+        <Link className="button secondary" href="/"><ListTodo size={16} />Tasks</Link>
+        <button className="icon-button" aria-label="Sign out" title="Sign out" onClick={() => void signOut()}><LogOut size={17} /></button>
+      </div>
+    </header>
 
-      <section className="page-heading calendar-heading">
-        <div><p className="eyebrow">PLAN AHEAD · SINGAPORE</p><h1>Your month, in view.</h1><p className="muted-copy">Tasks and public holidays, on the same page.</p></div>
+    <main>
+      <div className="page-heading">
+        <div><p className="eyebrow">PLAN AHEAD</p><h1>Your month, in view<span className="heading-dot">.</span></h1></div>
         <div className="month-controls">
-          <button className="secondary-button icon-text-button" onClick={() => navigateMonth(-1)} aria-label="Previous month"><ArrowLeft size={16} />Previous</button>
-          <button className="secondary-button" onClick={goToToday}>Today</button>
-          <button className="secondary-button icon-text-button" onClick={() => navigateMonth(1)} aria-label="Next month">Next<ArrowRight size={16} /></button>
+          <button className="button secondary" aria-label="Previous month" onClick={() => goToMonth(shiftMonth(month, -1))}><ArrowLeft size={15} />Prev</button>
+          <button className="button secondary" onClick={() => goToMonth(parseMonthParam(undefined, today.slice(0, 7)))}>Today</button>
+          <button className="button secondary" aria-label="Next month" onClick={() => goToMonth(shiftMonth(month, 1))}>Next<ArrowRight size={15} /></button>
         </div>
-      </section>
+      </div>
+
+      {error && <div role="alert" className="error-banner"><span>{error}</span>
+        <button className="button secondary" onClick={() => setRetry((value) => value + 1)}>Try again</button>
+      </div>}
 
       <section className="calendar-panel" aria-label="Calendar">
-        <div className="calendar-panel-heading"><h2>{new Intl.DateTimeFormat('en-SG', { timeZone: 'Asia/Singapore', month: 'long', year: 'numeric' }).format(new Date(Date.UTC(month.year, month.month - 1, 15)))}</h2><span className="timezone-label">UTC+8</span></div>
+        <div className="calendar-panel-heading">
+          <h2><CalendarDays size={16} />{monthLabel(month)}</h2>
+          <span className="timezone-label">UTC+8</span>
+          {loading && <span className="muted" role="status">Loading month…</span>}
+        </div>
         <div className="calendar-grid" role="grid" aria-label="Monthly calendar">
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => <div className="calendar-weekday" role="columnheader" key={day}>{day}</div>)}
+          {WEEKDAYS.map((day) => <div className="calendar-weekday" role="columnheader" key={day}>{day}</div>)}
           {days.map((day) => {
             const dayTodos = todosForSingaporeDate(todos, day.date);
             const holiday = holidayByDate.get(day.date);
-            return (
-              <button
-                className={`calendar-cell ${day.isCurrentMonth ? '' : 'outside-month'} ${day.isToday ? 'is-today' : ''} ${day.isPast ? 'is-past' : ''} ${day.isWeekend ? 'is-weekend' : ''}`}
-                role="gridcell"
-                key={day.date}
-                aria-label={`${day.date}${holiday ? `, ${holiday.name}` : ''}, ${dayTodos.length} tasks`}
-                onClick={() => setSelectedDate(day.date)}
-              >
-                <span className="calendar-day-header">
-                  <span className="calendar-day-number">{Number(day.date.slice(-2))}</span>
-                  {dayTodos.length > 0 && <span className="calendar-count" aria-hidden="true">{dayTodos.length}</span>}
-                </span>
-                {holiday && <span className="holiday-name" title={holiday.name}>{holiday.name}</span>}
-                {dayTodos.slice(0, 3).map((todo) => <span className={`calendar-todo priority-${todo.priority}`} key={todo.id}>{todo.title}</span>)}
-                {dayTodos.length > 3 && <span className="calendar-overflow">+{dayTodos.length - 3} more</span>}
-              </button>
-            );
+            const overflow = dayTodos.length - MAX_VISIBLE_TODOS;
+            return <button
+              type="button"
+              role="gridcell"
+              key={day.date}
+              className={`calendar-cell${day.isCurrentMonth ? '' : ' outside-month'}${day.isToday ? ' is-today' : ''}${day.isPast ? ' is-past' : ''}${day.isWeekend ? ' is-weekend' : ''}`}
+              aria-label={`${day.date}${holiday ? `, ${holiday.name}` : ''}, ${dayTodos.length} tasks`}
+              onClick={() => setSelectedDate(day.date)}
+            >
+              <span className="calendar-day-header">
+                <span className="calendar-day-number">{Number(day.date.slice(-2))}</span>
+                {dayTodos.length > 0 && <span className="calendar-count" aria-hidden="true">{dayTodos.length}</span>}
+              </span>
+              {holiday && <span className="holiday-name" title={holiday.name}>{holiday.name}</span>}
+              {dayTodos.slice(0, MAX_VISIBLE_TODOS).map((todo) => (
+                <span className={`calendar-todo ${todo.priority}`} key={todo.id} title={todo.title}>{todo.title}</span>
+              ))}
+              {overflow > 0 && <span className="calendar-overflow">+{overflow} more</span>}
+            </button>;
           })}
         </div>
-        {loading && <p className="calendar-status" role="status">Loading month…</p>}
-        {error && <div className="calendar-error" role="alert"><span>{error}</span><button className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div>}
-        <div className="calendar-legend"><span><i className="legend-dot priority-high" />High</span><span><i className="legend-dot priority-medium" />Medium</span><span><i className="legend-dot priority-low" />Low</span><span><i className="legend-dot holiday-dot" />Public holiday</span></div>
+        <div className="calendar-legend">
+          <span><i className="legend-dot high" />High</span>
+          <span><i className="legend-dot medium" />Medium</span>
+          <span><i className="legend-dot low" />Low</span>
+          <span><i className="legend-dot holiday" />Public holiday</span>
+        </div>
       </section>
 
-      {selectedDate && (
-        <dialog open className="dialog-backdrop" aria-labelledby="day-dialog-title" onCancel={(event) => { event.preventDefault(); setSelectedDate(null); }}>
-          <section className="dialog-panel day-dialog">
-            <div className="panel-heading"><div><p className="eyebrow">DAY DETAILS</p><h2 id="day-dialog-title">{new Intl.DateTimeFormat('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'full' }).format(new Date(`${selectedDate}T12:00:00+08:00`))}</h2></div><button className="icon-button" aria-label="Close day details" onClick={() => setSelectedDate(null)}>×</button></div>
-            {holidayByDate.get(selectedDate) && <p className="day-holiday">{holidayByDate.get(selectedDate)?.name}</p>}
-            {selectedTodos.length === 0 ? <p className="section-empty">No tasks due on this day.</p> : <ul className="day-todo-list">{selectedTodos.map((todo) => <li key={todo.id}><span className={`priority-badge priority-${todo.priority}`}>{todo.priority}</span><span className={todo.completed ? 'completed-title' : ''}>{todo.title}</span><span>{todo.completed ? 'Completed' : 'Open'}</span></li>)}</ul>}
-          </section>
-        </dialog>
-      )}
-      <footer className="app-footer"><span>DAYMARK / SINGAPORE</span><span>One month at a time</span></footer>
+      <footer className="workspace-footer"><span><span className="status-dot" />Due-dated tasks only</span><span>Singapore time (SGT)</span></footer>
     </main>
-  );
+
+    {selectedDate && <DayModal date={selectedDate} todos={selectedTodos}
+      holiday={holidayByDate.get(selectedDate)} onClose={() => setSelectedDate(null)} />}
+  </div>;
 }

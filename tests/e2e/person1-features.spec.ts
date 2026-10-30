@@ -49,7 +49,20 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   const tagId = Number(relatedDb.prepare('INSERT INTO tags (user_id, name) VALUES (?, ?)').run(persistedTodo.user_id, 'e2e-tag').lastInsertRowid);
   relatedDb.prepare('INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)').run(persistedTodo.id, tagId);
   relatedDb.prepare('INSERT INTO subtasks (todo_id, title) VALUES (?, ?)').run(persistedTodo.id, 'Cascade check');
+  const holidayName = `Evaluation Day ${Date.now()}`;
+  relatedDb.prepare(`INSERT INTO holidays (date, name) VALUES (?, ?)
+    ON CONFLICT(date) DO UPDATE SET name = excluded.name`).run(dueDate, holidayName);
+  const foreignUserId = Number(relatedDb.prepare('INSERT INTO users (username, display_name) VALUES (?, ?)')
+    .run(`${username}-other`, 'Person Two').lastInsertRowid);
+  const foreignTodoId = Number(relatedDb.prepare('INSERT INTO todos (user_id, title) VALUES (?, ?)')
+    .run(foreignUserId, 'Confidential').lastInsertRowid);
   relatedDb.close();
+
+  for (const response of [
+    await page.request.get(`/api/todos/${foreignTodoId}`),
+    await page.request.put(`/api/todos/${foreignTodoId}`, { data: { title: 'Stolen' } }),
+    await page.request.delete(`/api/todos/${foreignTodoId}`),
+  ]) expect(response.status()).toBe(404);
   const relatedTodos = await page.request.get('/api/todos');
   const relatedTodo = (await relatedTodos.json()).find((todo: { id: number }) => todo.id === persistedTodo.id);
   expect(relatedTodo.tags[0]).toMatchObject({ id: tagId, name: 'e2e-tag', color: '#3B82F6' });
@@ -69,6 +82,28 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   expect(invalidRecurring.status()).toBe(400);
   const invalidUpdate = await page.request.put(`/api/todos/${persistedTodo.id}`, { data: { due_date: '2020-01-01T00:00:00.000Z' } });
   expect(invalidUpdate.status()).toBe(400);
+
+  const mediumTodo = await page.request.post('/api/todos', { data: { title: 'Priority medium check', priority: 'medium' } });
+  const lowTodo = await page.request.post('/api/todos', { data: { title: 'Priority low check', priority: 'low' } });
+  await page.reload();
+  const pending = page.getByRole('region', { name: 'Pending' });
+  await expect(pending.getByTestId('task-row').locator('h3')).toHaveText([
+    'Prepare evaluation demo', 'Priority medium check', 'Priority low check',
+  ]);
+
+  const priorityColors = () => pending.getByTestId('task-row').locator('.priority > span')
+    .evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).backgroundColor));
+  const lightColors = await priorityColors();
+  expect(new Set(lightColors).size).toBe(3);
+  await page.getByRole('button', { name: 'Use dark theme' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  const darkColors = await priorityColors();
+  expect(new Set(darkColors).size).toBe(3);
+  await page.getByRole('button', { name: 'Use light theme' }).click();
+  for (const created of [mediumTodo, lowTodo]) {
+    await page.request.delete(`/api/todos/${(await created.json()).id}`);
+  }
+  await page.reload();
 
   await page.getByRole('button', { name: 'Edit Prepare evaluation demo' }).click();
   await page.getByLabel('Edit todo title').fill('Discarded edit');
@@ -95,7 +130,15 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   await expect(page.getByRole('region', { name: 'Completed', exact: true }).getByText('Prepare evaluation demo revised')).toBeVisible();
 
   await page.getByRole('link', { name: /calendar/i }).click();
-  await expect(page.getByRole('grid', { name: 'Monthly calendar' })).toBeVisible();
+  const grid = page.getByRole('grid', { name: 'Monthly calendar' });
+  await expect(grid).toBeVisible();
+  const gridLayout = await grid.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { display: style.display, columns: style.gridTemplateColumns.split(' ').length };
+  });
+  expect(gridLayout).toEqual({ display: 'grid', columns: 7 });
+  await expect(page.getByRole('columnheader')).toHaveText(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+  await expect(page.getByRole('gridcell')).toHaveCount(42);
   await page.goto('/calendar?month=2026-13');
   const currentMonthLabel = new Intl.DateTimeFormat('en-SG', {
     timeZone: 'Asia/Singapore', month: 'long', year: 'numeric',
@@ -106,11 +149,19 @@ test('passkey onboarding, todo CRUD, priority filter, and calendar navigation', 
   await expect(page.getByRole('gridcell', { name: /2028-02-29/ })).toBeVisible();
   await page.goto(`/calendar?month=${dueDate.slice(0, 7)}`);
   await expect(page.getByRole('grid', { name: 'Monthly calendar' })).toBeVisible();
-  await page.getByRole('gridcell', { name: new RegExp(`${dueDate}.*1 tasks`) }).click();
+  await expect(page.getByTitle(holidayName)).toBeVisible();
+  await page.getByRole('gridcell', { name: new RegExp(`${dueDate}.*${holidayName}.*1 tasks`) }).click();
   await expect(page.getByRole('dialog').getByText('Prepare evaluation demo revised')).toBeVisible();
+  await expect(page.getByRole('dialog').getByText(holidayName)).toBeVisible();
   await page.getByRole('button', { name: 'Close day details' }).click();
   await page.getByRole('button', { name: 'Next month' }).click();
   await expect(page).toHaveURL(/month=\d{4}-\d{2}/);
+  await page.getByRole('button', { name: 'Previous month' }).click();
+  await expect(page).toHaveURL(new RegExp(`month=${dueDate.slice(0, 7)}$`));
+  await page.getByRole('button', { name: 'Today' }).click();
+  const currentMonth = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit' })
+    .format(new Date()).replace('-', '-');
+  await expect(page).toHaveURL(new RegExp(`month=${currentMonth}$`));
 
   await page.getByRole('link', { name: 'Tasks' }).click();
   await page.getByRole('region', { name: 'Completed', exact: true }).getByRole('button', { name: 'Delete task Prepare evaluation demo revised', exact: true }).click();

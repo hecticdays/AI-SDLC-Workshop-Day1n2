@@ -236,7 +236,8 @@ export function createStore(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
     CREATE INDEX IF NOT EXISTS idx_todo_tags_tag_id ON todo_tags(tag_id);
     CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
-    CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(user_id, due_date);
+    CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
+    CREATE INDEX IF NOT EXISTS idx_todos_user_due_date ON todos(user_id, due_date);
     CREATE INDEX IF NOT EXISTS idx_subtasks_todo_id ON subtasks(todo_id);
     CREATE TABLE IF NOT EXISTS templates (
       id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -403,7 +404,16 @@ export function createStore(database: Database.Database) {
         tags: tagsByTodo.get(row.id) ?? [], subtasks: subtasksByTodo.get(row.id) ?? [] }));
     },
     findById(id: number, userId: number): Todo | undefined {
-      return todos.findAllByUser(userId).find((row) => row.id === id);
+      const row = database.prepare('SELECT * FROM todos WHERE id = ? AND user_id = ?').get(id, userId) as Todo | undefined;
+      if (!row) return undefined;
+      const subtaskRows = database.prepare('SELECT * FROM subtasks WHERE todo_id = ? ORDER BY position, id').all(id) as Subtask[];
+      return {
+        ...row,
+        completed: Boolean(row.completed),
+        is_recurring: Boolean(row.is_recurring),
+        tags: tags.findByTodoId(id, userId),
+        subtasks: subtaskRows.map((subtask) => ({ ...subtask, completed: Boolean(subtask.completed) })),
+      };
     },
     create(userId: number, input: unknown): Todo {
       return insertTodo(userId, todoInputSchema.parse(input));

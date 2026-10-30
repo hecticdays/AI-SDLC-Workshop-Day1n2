@@ -8,7 +8,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
       <p className="eyebrow">500</p>
       <h1>Something went wrong</h1>
       <p>The application failed to load. Please try again.</p>
-      <div className="status-actions"><button type="button" className="secondary-button" onClick={reset}>Try again</button></div>
+      <div className="status-actions"><button type="button" className="button secondary" onClick={reset}>Try again</button></div>
     </main>
   </body></html>;
 }

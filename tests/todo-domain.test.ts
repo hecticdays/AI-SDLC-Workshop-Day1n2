@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { generateCalendarGrid, getCalendarGridDateRange, todosForSingaporeDate } from '@/lib/calendar';
+import {
+  generateCalendarGrid, getCalendarGridDateRange, monthLabel, parseMonthParam, shiftMonth, todosForSingaporeDate,
+} from '@/lib/calendar';
 import { sectionTodos, sortTodos } from '@/lib/todo-sort';
-import { isDueDateAtLeastOneMinuteAhead, todoCreateSchema, todoUpdateSchema } from '@/lib/validation';
-import type { Todo } from '@/lib/db';
+import { isDueDateAtLeastOneMinuteAhead } from '@/lib/validation';
+import Database from 'better-sqlite3';
+import { createStore, todoInputSchema, todoUpdateSchema, type Todo } from '@/lib/db';
 
 function makeTodo(overrides: Partial<Todo> = {}): Todo {
   return {
@@ -54,6 +57,41 @@ describe('calendar domain', () => {
     assert.equal(range.endDateExclusive, '2026-04-12');
   });
 
+  it('emits 42 cells for short, long and differently aligned months', () => {
+    for (const [year, month, currentMonthDays] of [[2026, 2, 28], [2026, 3, 31], [2026, 11, 30]] as const) {
+      const grid = generateCalendarGrid(year, month, '2026-01-01');
+      assert.equal(grid.length, 42);
+      assert.equal(grid.filter((day) => day.isCurrentMonth).length, currentMonthDays);
+      assert.equal(grid.filter((day) => day.isToday).length, 0);
+    }
+  });
+
+  it('flags weekends only on Sunday and Saturday columns', () => {
+    const grid = generateCalendarGrid(2026, 3, '2026-03-01');
+    assert.deepEqual(grid.filter((_, index) => index % 7 === 0).every((day) => day.isWeekend), true);
+    assert.deepEqual(grid.filter((_, index) => index % 7 === 6).every((day) => day.isWeekend), true);
+    assert.equal(grid.filter((_, index) => index % 7 > 0 && index % 7 < 6).some((day) => day.isWeekend), false);
+  });
+
+  it('falls back to the current Singapore month for malformed, out-of-range or missing values', () => {
+    assert.deepEqual(parseMonthParam('2028-02', '2026-10'), { year: 2028, month: 2 });
+    for (const invalid of [undefined, null, '', 'abc', '2026-13', '2026-00', '0000-01', '10000-01']) {
+      assert.deepEqual(parseMonthParam(invalid, '2026-10'), { year: 2026, month: 10 });
+    }
+  });
+
+  it('shifts months across year boundaries and clamps to the supported range', () => {
+    assert.deepEqual(shiftMonth({ year: 2026, month: 12 }, 1), { year: 2027, month: 1 });
+    assert.deepEqual(shiftMonth({ year: 2026, month: 1 }, -1), { year: 2025, month: 12 });
+    assert.deepEqual(shiftMonth({ year: 1, month: 1 }, -1), { year: 1, month: 1 });
+    assert.deepEqual(shiftMonth({ year: 9999, month: 12 }, 1), { year: 9999, month: 12 });
+  });
+
+  it('labels years below 100 without the two-digit year shift', () => {
+    assert.equal(monthLabel({ year: 2028, month: 2 }), 'February 2028');
+    assert.equal(monthLabel({ year: 50, month: 3 }), 'March 50');
+  });
+
   it('places an ISO UTC due date on the Singapore-local day', () => {
     const todo = makeTodo({ due_date: '2026-02-28T16:30:00.000Z' });
     assert.equal(todosForSingaporeDate([todo], '2026-03-01').length, 1);
@@ -63,16 +101,31 @@ describe('calendar domain', () => {
 
 describe('request validation', () => {
   it('defaults priority and optional metadata on create but rejects null priority', () => {
-    assert.deepEqual(todoCreateSchema.parse({ title: '  Ship it  ' }), {
-      title: 'Ship it', priority: 'medium', tag_ids: [], is_recurring: false,
+    assert.deepEqual(todoInputSchema.parse({ title: '  Ship it  ' }), {
+      title: 'Ship it', priority: 'medium', tag_ids: [], due_date: null, is_recurring: false,
+      recurrence_pattern: null, reminder_minutes: null, subtasks: [],
     });
-    assert.equal(todoCreateSchema.safeParse({ title: 'Task', priority: null }).success, false);
+    assert.equal(todoInputSchema.safeParse({ title: 'Task', priority: null }).success, false);
   });
 
   it('accepts sparse updates and rejects empty updates or invalid priority', () => {
     assert.equal(todoUpdateSchema.safeParse({ completed: true }).success, true);
     assert.equal(todoUpdateSchema.safeParse({}).success, false);
     assert.equal(todoUpdateSchema.safeParse({ priority: 'urgent' }).success, false);
+  });
+
+  it('normalizes accepted due dates to UTC so stored values sort chronologically', () => {
+    const database = new Database(':memory:');
+    const { todos } = createStore(database);
+    database.prepare("INSERT INTO users(id, username) VALUES (1, 'owner')").run();
+    const earlier = todos.create(1, { title: 'Earlier', due_date: '2030-01-02T10:00:00+09:00' }).due_date;
+    const later = todos.create(1, { title: 'Later', due_date: '2030-01-02T02:00:00Z' }).due_date;
+    assert.equal(earlier, '2030-01-02T01:00:00.000Z');
+    assert.equal(later, '2030-01-02T02:00:00.000Z');
+    assert.ok(earlier! < later!, 'string ordering must match chronological ordering');
+    const moved = todos.create(1, { title: 'Moved' });
+    assert.equal(todos.update(moved.id, 1, { due_date: '2028-03-01T00:30:00+08:00' }).due_date, '2028-02-29T16:30:00.000Z');
+    database.close();
   });
 
   it('requires a valid due date at least one minute ahead', () => {
