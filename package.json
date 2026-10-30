@@ -12,8 +12,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/person4.test.ts tests/todo-domain.test.ts",
-    "test:e2e": "playwright test"
-    ,"seed:holidays": "tsx scripts/seed-holidays.ts"
+    "test:e2e": "playwright test",
+    "seed:holidays": "tsx scripts/seed-holidays.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.0",
