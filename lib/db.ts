@@ -84,11 +84,16 @@ export const tagUpdateSchema = tagInputSchema.extend({
 }).partial().refine(
   (value) => Object.keys(value).length > 0, 'At least one field is required',
 );
+// Offsets are normalized to UTC so stored strings sort chronologically in SQLite.
+const dueDateSchema = z.string().datetime({ offset: true })
+  .transform((value) => new Date(value).toISOString())
+  .nullable().optional();
+
 export const todoInputSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
   priority: z.enum(['high', 'medium', 'low']).default('medium'),
   tag_ids: z.array(z.number().int().positive()).default([]),
-  due_date: z.string().datetime({ offset: true }).nullable().optional(),
+  due_date: dueDateSchema,
   is_recurring: z.boolean().default(false),
   recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
   reminder_minutes: z.number().int().min(0).nullable().optional(),
@@ -97,7 +102,7 @@ export const todoUpdateSchema = z.object({
   title: z.string().trim().min(1, 'Title cannot be empty').optional(),
   priority: z.enum(['high', 'medium', 'low']).optional(),
   tag_ids: z.array(z.number().int().positive()).optional(),
-  due_date: z.string().datetime({ offset: true }).nullable().optional(),
+  due_date: dueDateSchema,
   is_recurring: z.boolean().optional(),
   recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
   reminder_minutes: z.number().int().min(0).nullable().optional(),
@@ -154,6 +159,9 @@ export function createStore(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
     CREATE INDEX IF NOT EXISTS idx_todo_tags_tag_id ON todo_tags(tag_id);
     CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
+    CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
+    CREATE INDEX IF NOT EXISTS idx_todos_user_due_date ON todos(user_id, due_date);
+    CREATE INDEX IF NOT EXISTS idx_subtasks_todo_id ON subtasks(todo_id);
   `);
   try { database.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"); } catch { /* Existing databases already have it. */ }
 
@@ -276,11 +284,20 @@ export function createStore(database: Database.Database) {
             parsed.recurrence_pattern ?? null, parsed.reminder_minutes ?? null);
         const id = Number(result.lastInsertRowid);
         tags.replaceForTodo(id, parsed.tag_ids, userId);
-        return todos.findAllByUser(userId).find((row) => row.id === id)!;
+        return todos.findById(id, userId)!;
       })();
     },
     findById(id: number, userId: number): Todo | undefined {
-      return todos.findAllByUser(userId).find((todo) => todo.id === id);
+      const row = database.prepare('SELECT * FROM todos WHERE id = ? AND user_id = ?').get(id, userId) as Todo | undefined;
+      if (!row) return undefined;
+      const subtaskRows = database.prepare('SELECT * FROM subtasks WHERE todo_id = ? ORDER BY position, id').all(id) as Subtask[];
+      return {
+        ...row,
+        completed: Boolean(row.completed),
+        is_recurring: Boolean(row.is_recurring),
+        tags: tags.findByTodoId(id, userId),
+        subtasks: subtaskRows.map((subtask) => ({ ...subtask, completed: Boolean(subtask.completed) })),
+      };
     },
     update(id: number, userId: number, input: z.input<typeof todoUpdateSchema>): Todo | undefined {
       const parsed = todoUpdateSchema.parse(input);

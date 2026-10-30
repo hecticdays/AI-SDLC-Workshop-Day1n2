@@ -1,7 +1,7 @@
 'use client';
 
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
-import { KeyRound, ShieldCheck } from 'lucide-react';
+import { KeyRound, Layers3 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -66,14 +66,14 @@ export function PasskeyAuth() {
 
   return (
     <main className="auth-screen">
-      <section className="auth-panel" aria-labelledby="auth-title">
-        <Link className="brand-lockup" href="/">
-          <span className="brand-mark"><ShieldCheck size={19} aria-hidden="true" /></span>
-          <span>DAYMARK</span>
+      <section className="auth-card" aria-labelledby="auth-title">
+        <Link className="brand" href="/">
+          <span className="brand-icon"><Layers3 size={22} aria-hidden="true" /></span>
+          Daybook
         </Link>
-        <p className="eyebrow">A calmer way to plan</p>
-        <h1 id="auth-title">Your day, in focus.</h1>
-        <p className="auth-copy">Sign in with a passkey to keep your tasks private and in sync.</p>
+        <p className="eyebrow">A CALMER WAY TO PLAN</p>
+        <h1 id="auth-title">Your day, in focus<span className="heading-dot">.</span></h1>
+        <p className="muted">Sign in with a passkey to keep your tasks private and in sync.</p>
 
         <div className="segmented" role="tablist" aria-label="Account access">
           <button type="button" role="tab" aria-selected={mode === 'register'} onClick={() => { setMode('register'); setError(null); }}>Create account</button>
@@ -81,29 +81,22 @@ export function PasskeyAuth() {
         </div>
 
         <form className="auth-form" onSubmit={submit}>
-          <label htmlFor="username">Username</label>
-          <input id="username" autoComplete="username webauthn" minLength={3} maxLength={40} required value={username} onChange={(event) => setUsername(event.target.value)} />
+          <label htmlFor="username">Username
+            <input id="username" autoComplete="username webauthn" minLength={3} maxLength={40} required value={username} onChange={(event) => setUsername(event.target.value)} />
+          </label>
           {mode === 'register' && (
-            <>
-              <label htmlFor="display-name">Name</label>
+            <label htmlFor="display-name">Name
               <input id="display-name" autoComplete="name" maxLength={80} required value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-            </>
+            </label>
           )}
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <button className="primary-button full-button" type="submit" disabled={isBusy}>
-            <KeyRound size={17} aria-hidden="true" />
+          {error && <p className="error-banner" role="alert">{error}</p>}
+          <button className="button primary full-width" type="submit" disabled={isBusy}>
+            <KeyRound size={16} aria-hidden="true" />
             {isBusy ? 'Waiting for passkey…' : mode === 'register' ? 'Create passkey' : 'Continue with passkey'}
           </button>
         </form>
-        <p className="auth-footnote">Passkeys are stored with your device or password manager. Daymark never sees a password.</p>
+        <p className="auth-note">Passkeys are stored with your device or password manager. Daybook never sees a password.</p>
       </section>
-      <aside className="auth-aside" aria-hidden="true">
-        <div className="aside-date">SINGAPORE · UTC+8</div>
-        <div className="aside-sun">08<span>:</span>42</div>
-        <div className="aside-rule" />
-        <p>Make room for<br />what matters today.</p>
-        <div className="aside-day">MONDAY <span>·</span> 01</div>
-      </aside>
     </main>
   );
 }
