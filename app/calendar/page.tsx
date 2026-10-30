@@ -12,7 +12,7 @@ function parseMonth(value: string | undefined) {
     const [year, month] = value.split('-').map(Number);
     if (month >= 1 && month <= 12) return { year, month };
   }
-  const [year, month] = formatSingaporeDate(new Date(), 'YYYY-MM').split('-').map(Number);
+  const [year, month] = formatSingaporeDate(new Date(), 'yyyy-MM').split('-').map(Number);
   return { year, month };
 }
 

@@ -27,7 +27,7 @@ export const test = base.extend<{ account: { userId: number; foreignTag: number;
     const foreignTodo = store.todos.create(otherId, { title: 'Confidential', tag_ids: [foreignTag] }).id;
     const token = await new SignJWT({ userId, username }).setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt().setExpirationTime('1h').sign(new TextEncoder().encode('person4-test-only-secret-not-for-deployment-0000'));
-    await context.addCookies([{ name: 'session', value: token, url: 'http://127.0.0.1:3107', httpOnly: true, sameSite: 'Lax' }]);
+    await context.addCookies([{ name: 'session', value: token, url: 'http://localhost:3107', httpOnly: true, sameSite: 'Lax' }]);
     try { await provide({ userId, foreignTag, foreignTodo }); }
     finally {
       database.prepare('DELETE FROM users WHERE id IN (?, ?)').run(userId, otherId);

@@ -11,7 +11,8 @@ const sessionSchema = z.object({ userId: z.number().int().positive(), username: 
 const COOKIE_NAME = 'session';
 
 function signingKey() {
-  const secret = process.env.JWT_SECRET;
+  const secret = process.env.JWT_SECRET
+    ?? (process.env.NODE_ENV === 'production' ? '' : 'local-development-jwt-secret-change-before-deploy');
   if (!secret || new TextEncoder().encode(secret).length < 32) throw new Error('JWT_SECRET must contain at least 32 bytes');
   return new TextEncoder().encode(secret);
 }
@@ -45,4 +46,15 @@ export async function deleteSession(): Promise<void> {
   (await cookies()).set(COOKIE_NAME, '', {
     httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 0,
   });
+}
+
+export const clearSession = deleteSession;
+
+export function getWebAuthnConfig() {
+  const rpID = process.env.RP_ID ?? 'localhost';
+  return {
+    rpID,
+    rpName: process.env.RP_NAME ?? 'Daybook Todo',
+    origin: process.env.RP_ORIGIN ?? `http://${rpID}:${process.env.PORT ?? '3000'}`,
+  };
 }

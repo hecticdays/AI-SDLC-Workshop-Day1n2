@@ -16,3 +16,8 @@ export function formatSingaporeDate(value: string | Date, pattern = 'yyyy-MM-dd'
   const date = typeof value === 'string' ? singaporeInstant(value) : value;
   return formatInTimeZone(date, SINGAPORE_TIMEZONE, pattern);
 }
+
+export function formatSingaporeDateTime(value: string | Date): string {
+  const date = typeof value === 'string' ? singaporeInstant(value) : value;
+  return formatInTimeZone(date, SINGAPORE_TIMEZONE, 'd MMM, HH:mm');
+}

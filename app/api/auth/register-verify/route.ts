@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       deviceType: credentialDeviceType,
       backedUp: credentialBackedUp,
     });
-    await createSession(user.id);
+    await createSession(user);
     return NextResponse.json({ verified: true });
   } catch {
     return NextResponse.json({ error: 'Passkey registration could not be verified.' }, { status: 400 });

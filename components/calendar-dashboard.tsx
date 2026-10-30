@@ -24,7 +24,7 @@ export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
-  const today = formatSingaporeDate(new Date(), 'YYYY-MM-DD');
+  const today = formatSingaporeDate(new Date(), 'yyyy-MM-dd');
   const days = useMemo(() => generateCalendarGrid(month.year, month.month, today), [month.year, month.month, today]);
 
   useEffect(() => {
@@ -40,8 +40,8 @@ export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
         if (!todoResponse.ok) throw new Error(await responseError(todoResponse));
         if (!holidayResponse.ok) throw new Error(await responseError(holidayResponse));
         const [todoData, holidayData] = await Promise.all([todoResponse.json(), holidayResponse.json()]);
-        if (!Array.isArray(todoData.todos) || !Array.isArray(holidayData.holidays)) throw new Error('Invalid calendar response.');
-        setTodos(todoData.todos);
+        if (!Array.isArray(todoData) || !Array.isArray(holidayData.holidays)) throw new Error('Invalid calendar response.');
+        setTodos(todoData);
         setHolidays(holidayData.holidays);
       } catch (caught) {
         if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : 'Could not load calendar data.');
@@ -73,7 +73,8 @@ export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
 
   async function signOut() {
     await fetch('/api/auth/logout', { method: 'POST' });
-    window.location.assign('/login');
+    router.replace('/login');
+    router.refresh();
   }
 
   return (

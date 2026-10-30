@@ -1,7 +1,7 @@
 export function getSessionVerificationKey() {
-  const secret = process.env.SESSION_SECRET
-    ?? (process.env.NODE_ENV === 'production' ? '' : 'local-development-secret-change-before-deploy');
-  if (secret.length < 32) throw new Error('SESSION_SECRET must contain at least 32 characters');
+  const secret = process.env.JWT_SECRET
+    ?? (process.env.NODE_ENV === 'production' ? '' : 'local-development-jwt-secret-change-before-deploy');
+  if (new TextEncoder().encode(secret).length < 32) throw new Error('JWT_SECRET must contain at least 32 bytes');
   return new TextEncoder().encode(secret);
 }
 
@@ -16,9 +16,12 @@ export async function verifySessionToken(token: string) {
   if (parts.length !== 3) return false;
   try {
     const header = JSON.parse(new TextDecoder().decode(decodeBase64Url(parts[0]))) as { alg?: string };
-    const payload = JSON.parse(new TextDecoder().decode(decodeBase64Url(parts[1]))) as { exp?: number; userId?: number; sub?: string };
+    const payload = JSON.parse(new TextDecoder().decode(decodeBase64Url(parts[1]))) as {
+      exp?: number; iat?: number; userId?: number; username?: string;
+    };
     if (header.alg !== 'HS256' || !Number.isInteger(payload.userId) || Number(payload.userId) < 1
-      || payload.sub !== String(payload.userId) || typeof payload.exp !== 'number' || payload.exp <= Date.now() / 1000) {
+      || typeof payload.username !== 'string' || payload.username.length === 0
+      || typeof payload.iat !== 'number' || typeof payload.exp !== 'number' || payload.exp <= Date.now() / 1000) {
       return false;
     }
     const key = await crypto.subtle.importKey('raw', getSessionVerificationKey(), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);

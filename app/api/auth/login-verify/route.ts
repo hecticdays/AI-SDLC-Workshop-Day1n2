@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     });
     if (!verification.verified) return NextResponse.json({ error: 'Authentication failed.' }, { status: 401 });
     updateAuthenticatorCounter(authenticator.credential_id, verification.authenticationInfo.newCounter, verification.authenticationInfo.credentialBackedUp);
-    await createSession(user.id);
+    await createSession(user);
     return NextResponse.json({ verified: true });
   } catch {
     return NextResponse.json({ error: 'Authentication failed.' }, { status: 401 });

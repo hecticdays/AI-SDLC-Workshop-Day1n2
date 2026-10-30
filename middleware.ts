@@ -2,7 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { verifySessionToken } from '@/lib/session-token';
 
 export async function middleware(request: NextRequest) {
-  const token = request.cookies.get('todo_session')?.value;
+  if (process.env.NODE_ENV === 'development' && process.env.DEMO_MODE === 'true'
+    && process.env.DATABASE_PATH === 'demo.db') return NextResponse.next();
+  const token = request.cookies.get('session')?.value;
   if (token && await verifySessionToken(token)) return NextResponse.next();
 
   if (request.nextUrl.pathname.startsWith('/api/')) {

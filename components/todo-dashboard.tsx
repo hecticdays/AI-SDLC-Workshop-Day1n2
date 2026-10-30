@@ -2,6 +2,7 @@
 
 import { CalendarDays, Check, ChevronRight, Circle, LogOut, Pencil, Plus, Trash2 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import type { Todo, TodoCreate, TodoUpdate } from '@/lib/db';
 import { formatSingaporeDateTime } from '@/lib/timezone';
@@ -77,6 +78,7 @@ function TodoFields({ form, setForm }: { form: TodoForm; setForm: (next: TodoFor
 }
 
 export function TodoDashboard() {
+  const router = useRouter();
   const [todos, setTodos] = useState<Todo[]>([]);
   const [form, setForm] = useState<TodoForm>(emptyForm);
   const [editing, setEditing] = useState<Todo | null>(null);
@@ -211,7 +213,8 @@ export function TodoDashboard() {
 
   async function signOut() {
     await fetch('/api/auth/logout', { method: 'POST' });
-    window.location.assign('/login');
+    router.replace('/login');
+    router.refresh();
   }
 
   const allSections = [

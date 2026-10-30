@@ -38,12 +38,36 @@ export interface Todo {
   tags?: Tag[];
 }
 
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
+}
+
+export interface User {
+  id: number;
+  username: string;
+  display_name: string;
+}
+
+export interface AuthenticatorRecord {
+  credential_id: string;
+  user_id: number;
+  public_key: string;
+  counter: number;
+  transports: string;
+  device_type: string;
+  backed_up: number;
+}
+
 export interface CreateTagInput {
   name: string;
   color?: string;
 }
 
 export type UpdateTagInput = Partial<CreateTagInput>;
+export type TodoCreate = z.infer<typeof todoInputSchema>;
+export type TodoUpdate = z.input<typeof todoUpdateSchema>;
 
 export class DataError extends Error {
   constructor(message: string, public status: number) {
@@ -64,13 +88,28 @@ export const todoInputSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
   priority: z.enum(['high', 'medium', 'low']).default('medium'),
   tag_ids: z.array(z.number().int().positive()).default([]),
+  due_date: z.string().datetime({ offset: true }).nullable().optional(),
+  is_recurring: z.boolean().default(false),
+  recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
+  reminder_minutes: z.number().int().min(0).nullable().optional(),
 }).strict();
+export const todoUpdateSchema = z.object({
+  title: z.string().trim().min(1, 'Title cannot be empty').optional(),
+  priority: z.enum(['high', 'medium', 'low']).optional(),
+  tag_ids: z.array(z.number().int().positive()).optional(),
+  due_date: z.string().datetime({ offset: true }).nullable().optional(),
+  is_recurring: z.boolean().optional(),
+  recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
+  reminder_minutes: z.number().int().min(0).nullable().optional(),
+  completed: z.boolean().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 
 export function createStore(database: Database.Database) {
   database.pragma('foreign_keys = ON');
   database.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS todos (
@@ -95,10 +134,28 @@ export function createStore(database: Database.Database) {
       tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
       PRIMARY KEY(todo_id, tag_id)
     );
+    CREATE TABLE IF NOT EXISTS authenticators (
+      credential_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      public_key TEXT NOT NULL, counter INTEGER NOT NULL DEFAULT 0, transports TEXT NOT NULL DEFAULT '[]',
+      device_type TEXT NOT NULL, backed_up INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_authenticators_user_id ON authenticators(user_id);
+    CREATE TABLE IF NOT EXISTS auth_challenges (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      challenge TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('registration', 'authentication')),
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_challenges_user_kind ON auth_challenges(user_id, kind);
+    CREATE TABLE IF NOT EXISTS holidays (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
     CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
     CREATE INDEX IF NOT EXISTS idx_todo_tags_tag_id ON todo_tags(tag_id);
     CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
   `);
+  try { database.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"); } catch { /* Existing databases already have it. */ }
 
   const findTag = (id: number, userId: number) => database.prepare(
     'SELECT * FROM tags WHERE id = ? AND user_id = ?',
@@ -212,11 +269,44 @@ export function createStore(database: Database.Database) {
     create(userId: number, input: z.input<typeof todoInputSchema>): Todo {
       const parsed = todoInputSchema.parse(input);
       return database.transaction(() => {
-        const result = database.prepare('INSERT INTO todos(user_id, title, priority) VALUES (?, ?, ?)').run(userId, parsed.title, parsed.priority);
+        const result = database.prepare(`INSERT INTO todos
+          (user_id, title, priority, due_date, is_recurring, recurrence_pattern, reminder_minutes)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .run(userId, parsed.title, parsed.priority, parsed.due_date ?? null, Number(parsed.is_recurring),
+            parsed.recurrence_pattern ?? null, parsed.reminder_minutes ?? null);
         const id = Number(result.lastInsertRowid);
         tags.replaceForTodo(id, parsed.tag_ids, userId);
         return todos.findAllByUser(userId).find((row) => row.id === id)!;
       })();
+    },
+    findById(id: number, userId: number): Todo | undefined {
+      return todos.findAllByUser(userId).find((todo) => todo.id === id);
+    },
+    update(id: number, userId: number, input: z.input<typeof todoUpdateSchema>): Todo | undefined {
+      const parsed = todoUpdateSchema.parse(input);
+      return database.transaction(() => {
+        const existing = todos.findById(id, userId);
+        if (!existing) return undefined;
+        const columns: Record<string, string> = {
+          title: 'title', priority: 'priority', due_date: 'due_date', is_recurring: 'is_recurring',
+          recurrence_pattern: 'recurrence_pattern', reminder_minutes: 'reminder_minutes', completed: 'completed',
+        };
+        const values = Object.entries(parsed).filter(([key]) => key !== 'tag_ids' && key in columns);
+        if (values.length > 0) {
+          const assignments = values.map(([key]) => `${columns[key]} = @${key}`);
+          assignments.push("updated_at = datetime('now')");
+          const parameters = Object.fromEntries(values.map(([key, value]) => [
+            key, key === 'completed' || key === 'is_recurring' ? Number(value) : value,
+          ]));
+          database.prepare(`UPDATE todos SET ${assignments.join(', ')} WHERE id = @id AND user_id = @userId`)
+            .run({ ...parameters, id, userId });
+        }
+        if (parsed.tag_ids !== undefined) tags.replaceForTodo(id, parsed.tag_ids, userId);
+        return todos.findById(id, userId);
+      })();
+    },
+    delete(id: number, userId: number): boolean {
+      return database.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?').run(id, userId).changes > 0;
     },
   };
   return { tags, todos };
@@ -274,3 +364,85 @@ export const tagDB = new Proxy({} as ReturnType<typeof createStore>['tags'], {
 export const todoDB = new Proxy({} as ReturnType<typeof createStore>['todos'], {
   get: (_target, property: keyof ReturnType<typeof createStore>['todos']) => getStore().todos[property],
 });
+
+export function findUserByUsername(username: string): User | undefined {
+  const row = getDatabase().prepare('SELECT id, username, display_name FROM users WHERE username = ? COLLATE NOCASE')
+    .get(username) as User | undefined;
+  return row ? { ...row, display_name: row.display_name || row.username } : undefined;
+}
+
+export function createUser(username: string, displayName: string): User {
+  const normalized = username.trim().toLowerCase();
+  const result = getDatabase().prepare('INSERT INTO users(username, display_name) VALUES (?, ?)')
+    .run(normalized, displayName.trim());
+  return { id: Number(result.lastInsertRowid), username: normalized, display_name: displayName.trim() };
+}
+
+export function listAuthenticators(userId: number): AuthenticatorRecord[] {
+  return getDatabase().prepare(`SELECT credential_id, user_id, public_key, counter, transports, device_type, backed_up
+    FROM authenticators WHERE user_id = ? ORDER BY created_at`).all(userId) as AuthenticatorRecord[];
+}
+
+export function findAuthenticator(credentialId: string): AuthenticatorRecord | undefined {
+  return getDatabase().prepare(`SELECT credential_id, user_id, public_key, counter, transports, device_type, backed_up
+    FROM authenticators WHERE credential_id = ?`).get(credentialId) as AuthenticatorRecord | undefined;
+}
+
+export function addAuthenticator(input: {
+  credentialId: string; userId: number; publicKey: string; counter: number;
+  transports: string[]; deviceType: string; backedUp: boolean;
+}): void {
+  getDatabase().prepare(`INSERT INTO authenticators
+    (credential_id, user_id, public_key, counter, transports, device_type, backed_up)
+    VALUES (@credentialId, @userId, @publicKey, @counter, @transports, @deviceType, @backedUp)`)
+    .run({ ...input, transports: JSON.stringify(input.transports), backedUp: Number(input.backedUp) });
+}
+
+export function updateAuthenticatorCounter(credentialId: string, counter: number, backedUp: boolean): void {
+  getDatabase().prepare('UPDATE authenticators SET counter = ?, backed_up = ? WHERE credential_id = ?')
+    .run(counter, Number(backedUp), credentialId);
+}
+
+export function saveChallenge(userId: number, challenge: string, kind: 'registration' | 'authentication'): void {
+  const database = getDatabase();
+  database.prepare('DELETE FROM auth_challenges WHERE expires_at < ?').run(Date.now());
+  database.prepare('DELETE FROM auth_challenges WHERE user_id = ? AND kind = ?').run(userId, kind);
+  database.prepare('INSERT INTO auth_challenges(user_id, challenge, kind, expires_at) VALUES (?, ?, ?, ?)')
+    .run(userId, challenge, kind, Date.now() + 5 * 60_000);
+}
+
+export function consumeChallenge(userId: number, kind: 'registration' | 'authentication'): string | undefined {
+  const database = getDatabase();
+  return database.transaction(() => {
+    const row = database.prepare(`SELECT challenge FROM auth_challenges
+      WHERE user_id = ? AND kind = ? AND expires_at >= ? ORDER BY expires_at DESC LIMIT 1`)
+      .get(userId, kind, Date.now()) as { challenge: string } | undefined;
+    database.prepare('DELETE FROM auth_challenges WHERE user_id = ? AND kind = ?').run(userId, kind);
+    return row?.challenge;
+  })();
+}
+
+export function findTodo(userId: number, todoId: number): Todo | undefined {
+  return getStore().todos.findById(todoId, userId);
+}
+
+export function updateTodo(userId: number, todoId: number, input: TodoUpdate): Todo | undefined {
+  return getStore().todos.update(todoId, userId, input);
+}
+
+export function deleteTodo(userId: number, todoId: number): boolean {
+  return getStore().todos.delete(todoId, userId);
+}
+
+export function findHolidays(startDate?: string, endDateExclusive?: string): Holiday[] {
+  const database = getDatabase();
+  return startDate && endDateExclusive
+    ? database.prepare('SELECT id, date, name FROM holidays WHERE date >= ? AND date < ? ORDER BY date')
+      .all(startDate, endDateExclusive) as Holiday[]
+    : database.prepare('SELECT id, date, name FROM holidays ORDER BY date').all() as Holiday[];
+}
+
+export function upsertHoliday(date: string, name: string): void {
+  getDatabase().prepare(`INSERT INTO holidays(date, name) VALUES (?, ?)
+    ON CONFLICT(date) DO UPDATE SET name = excluded.name`).run(date, name);
+}

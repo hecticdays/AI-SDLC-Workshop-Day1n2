@@ -9,7 +9,7 @@ export interface CalendarDay {
   isWeekend: boolean;
 }
 
-export function generateCalendarGrid(year: number, month: number, today = formatSingaporeDate(new Date(), 'YYYY-MM-DD')): CalendarDay[] {
+export function generateCalendarGrid(year: number, month: number, today = formatSingaporeDate(new Date(), 'yyyy-MM-dd')): CalendarDay[] {
   if (!Number.isInteger(year) || year < 1 || !Number.isInteger(month) || month < 1 || month > 12) {
     throw new RangeError('Calendar year and month are invalid');
   }
@@ -47,5 +47,5 @@ export function getCalendarGridDateRange(year: number, month: number) {
 
 export function todosForSingaporeDate(todos: Todo[], date: string): Todo[] {
   return todos.filter((todo) => todo.due_date !== null
-    && formatSingaporeDate(new Date(todo.due_date), 'YYYY-MM-DD') === date);
+    && formatSingaporeDate(new Date(todo.due_date), 'yyyy-MM-dd') === date);
 }
