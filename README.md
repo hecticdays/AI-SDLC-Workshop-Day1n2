@@ -43,6 +43,7 @@ Tag uniqueness and import reuse share trimmed names and SQLite `NOCASE` (ASCII c
 
 ### Integration and Remaining Limits
 
+- **Task tags:** The full task editor submits tag selections with task details through ownership-checked, atomic replacement. Duplicate IDs are collapsed and an empty selection clears tags. Optimistic creation/editing preserves selected tags under active filters; the independent Task tags dialog remains available.
 - **Other owners:** Todo storage and supporting create/update/delete routes now exist for the integrated flows; this update does not certify full Person 1/2, recurring-successor/notification or calendar delivery. Client mutations refresh the nested searchable collection. The main UI remains in `app/page.tsx` per repository convention.
 - **Logout/recovery:** Logout clears this browser's cookies only; there is no server-side revocation of copied JWTs. Account recovery is not implemented. Adding another passkey requires recent `authTime` within five minutes; sign in again if the session is older.
 - **Backup boundary:** Templates and saved filter presets are excluded. CSV is one-way and omits tag/checklist relations. Imports intentionally add copies rather than merging todos; tags reuse the importing user's matching names/colors.
@@ -67,7 +68,7 @@ npm run test:e2e
 
 Unit/DB tests cover filters, timezone boundaries, presets, tags, subtasks/progress, template snapshots/rollback, historical import validation/rollback, CSV safety, auth attempts/tokens and the demo guard. Playwright adds virtual-authenticator ceremonies, API isolation, retryable UI, JSON/CSV downloads and relational restoration to the existing tag/search workflows. Tests use `.person4-e2e.db` and test-only signing configuration, independent of `todos.db` and `demo.db`; suites provision their own sessions rather than depending on test-file order. Screenshots/traces are written under `test-results/` (gitignored).
 
-**Person 4 completion:** Verified on 2026-10-30 with 13 unit tests and 32 desktop/mobile browser cases. This includes failed-save rollback/retry, modal focus, AA tag-text contrast, deleted-tag presets, storage-full errors, exact debounce timing, immediate cross-feature refresh, 60-task cascade integrity, all-filter performance under 100ms for 1000 todos, and average warm tag CRUD latency under 300ms. `EVALUATION.md` and the assigned PRPs record the completed acceptance criteria. Search intentionally covers todo/subtask titles, not tag names, resolving the older evaluation checklist in favor of PRP 08.
+**Person 4 completion:** Verified on 2026-10-30 with 13 Person 4 unit tests and 38 desktop/mobile browser cases; all 21 shared unit tests also pass. This includes full-editor tag save/cancel/clear with reload persistence, tag-filter visibility during delayed creation, failed-save rollback/retry, modal focus, AA tag-text contrast, deleted-tag presets, storage-full errors, exact debounce timing, immediate cross-feature refresh, 60-task cascade integrity, all-filter performance under 100ms for 1000 todos, and average warm tag CRUD latency under 300ms. `EVALUATION.md` and the assigned PRPs record the completed acceptance criteria. Search intentionally covers todo/subtask titles, not tag names, resolving the older evaluation checklist in favor of PRP 08.
 
 ---
 

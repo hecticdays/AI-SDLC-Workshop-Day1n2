@@ -202,6 +202,9 @@ h1 { font-size: 34px; line-height: 1.15; font-weight: 600; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 19px; }
 .assignment-list { display: flex; flex-direction: column; gap: 10px; margin: 22px 0; }
 .assignment-list label { flex-direction: row; align-items: center; gap: 10px; font-size: 14px; font-weight: 400; color: var(--ink); padding: 6px 0; cursor: pointer; }
+.todo-edit-tags { min-width: 0; border: 0; margin: 0; padding: 0; }
+.todo-edit-tags legend { color: var(--muted); font-size: 12px; font-weight: 600; margin-bottom: 7px; }
+.tag-selector { display: flex; flex-wrap: wrap; gap: 7px; }
 .task-dialog-title, .confirmation-text, .filter-preview { font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .filter-preview { color: var(--muted); border-left: 2px solid var(--accent); padding-left: 12px; margin-bottom: 22px; }
 .muted { color: var(--muted); font-size: 11px; }
