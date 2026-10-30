@@ -2,7 +2,39 @@
 
 This document provides a comprehensive checklist for evaluating the completeness of the Todo App implementation, including all core features, testing, and deployment to cloud platforms.
 
+## Persons 3 and 5: Implementation Verification
+
+**Last updated:** 2026-10-30, current working tree. Persons 3 and 5 implementation is complete. The historical reviews below describe earlier PRP examples and the partial app at `a3b4feb`; they are retained as review history, not current missing-route reports.
+
+| Area | Delivered behavior | Evidence |
+|---|---|---|
+| PRP 05 | Subtask create, rename, toggle and delete; parent-derived ownership/404; ordered reads, cascade deletion, independent parent completion, client-safe rounded progress, pending controls and optimistic toggles with reconciliation. | `tests/person3.test.ts`, `tests/07-subtasks.spec.ts` |
+| PRP 07 | Full owned template CRUD, manager/category filtering and quick use; draft checklist capture; snapshot isolation; atomic fresh unchecked todos/checklists without tags; validated relative offsets resolved on the server. | `tests/person3.test.ts`, `tests/09-templates.spec.ts` |
+| PRP 09 | Strict version-1 JSON validation and transactional restore of historical state; canonical UTC due dates, preserved creation timestamps and checklist array order, fresh todo/subtask IDs, trimmed ASCII-NOCASE tag reuse with existing color precedence, no completion/notification side effects; CSV writer with formula escaping. | `tests/portability.test.ts`, `tests/11-export-import.spec.ts` |
+| PRP 11 | SimpleWebAuthn 13 registration/login and authenticated additional-passkey enrollment; SQLite browser/account/operation-bound attempts, 300-second TTL and atomic consumption; required user verification, recent-auth enrollment, login/logout UI and Next.js 16 `proxy.ts` protection. | `tests/auth.test.ts`, `tests/01-authentication.spec.ts` |
+
+**Recorded verification:** `npm test`: 35 unit/DB tests pass. `npm run test:coverage`: 87.53% lines, 89.25% branches, 88.73% functions on loaded `lib/**` (not whole-app coverage). `npm run build`: successful, Next.js 16.4.3. `npx playwright test`: all 62 desktop/mobile cases pass, comprising 32 prior Person 4 cases and 30 new cases. These supplied implementation-run results are not a production audit, device certification, or proof of every performance/accessibility criterion. This documentation update does not rerun application tests.
+
+### Historical Findings: Current Resolution
+
+- **P3-05-01 through P3-05-04:** User-scoped mutations, strict input validation, pending optimistic toggle reconciliation, deterministic position/ID ordering and `lib/progress.ts` now implement the controlling contracts. Rename is included. Parent deletion cascades in SQLite; parent/checklist completion remain independent.
+- **P3-07-01 through P3-07-06:** Shared store contracts, validated checklist parsing with empty fallback for corrupt stored shapes, transactional use/rollback, positive integer offsets and schedule validation, template editing/category filtering, draft checklist capture and pending/error handling are delivered. Snapshot fidelity preserves title/order; import separately normalizes numeric positions to array order. Reminder/recurrence templates require an offset. Normal recurring-successor generation remains outside this verification scope.
+- **EXP-01 through EXP-04, EXP-06:** Validated restoration deliberately accepts historical dates, normalizes due-date instants/order, reuses owned tags, resets notification stamps and writes directly in one transaction without triggering recurring completion actions. **EXP-02:** `csv-stringify` formula escaping and independent parser tests address spreadsheet safety. **EXP-07:** CSV remains the fixed tag-free column set; JSON carries relations, Singapore-offset export timestamps and controlled format/error responses.
+- **AUTH-01 through AUTH-07:** Separate enrollment, stable opaque handles, bound single-use attempts, account-scoped credentials, required UV/origin/RP checks, compatible SimpleWebAuthn 13 APIs, atomic registration/counter handling, retryable UI and independent fixtures are implemented. **AUTH-08:** Cookie/JWT validation is implemented; logout is intentionally browser-local. **AUTH-09:** Next.js 16 proxy protection is implemented; real-device breadth, prompt-inclusive timing and enumeration resistance are not certified by the virtual-authenticator suite.
+
+### Remaining Limits and Follow-up
+
+- Logout clears this browser's cookies; copied JWTs are not revoked server-side and can remain valid until expiry. There is no account recovery if all passkeys are lost. Additional enrollment requires recent authentication (five-minute `authTime` window); an old valid session must sign in again.
+- Templates and saved filter presets are excluded from JSON backups. CSV is one-way, excludes checklist/tag relations, and escapes formula-like values; JSON is the restoration format. Tag reuse uses trimmed SQLite ASCII `NOCASE`, not full Unicode folding. Repeated imports intentionally create more todos.
+- **EXP-05 accepted policy:** No hard import size limit; files over 10 MiB show a progress warning. Whole-document validation and synchronous transactional writes require upstream request/resource limits before deployment; a warning is not resource protection.
+- IP rate buckets are used only with `AUTH_TRUST_PROXY=true` and a valid forwarded IP. Deployers must use a trusted proxy that strips/overwrites client-supplied forwarding headers and prevents direct untrusted access. Otherwise rate limiting is per browser, not a reliable global/IP abuse barrier. Distinct username/conflict responses still expose account-existence information.
+- Production requires HTTPS, correct public `APP_ORIGIN`/`WEBAUTHN_RP_ID`, a private JWT secret of at least 32 bytes, and stable private persistent SQLite storage. Existing legacy case-sensitive tag databases still need migration/duplicate resolution. No production security audit, real-device compatibility certification, unbounded-scale guarantee, or new Person 1/2/calendar completion claim is made.
+
+The feature statuses below record implementation completion with scoped test evidence. Unticked checklist items remain unverified criteria or historical test plans, not proof that the delivered routes are missing.
+
 ## Person 4: Implementation Verification
+
+**Historical scope note:** This retained record describes the earlier Person 4 delivery. Its handoff language does not describe current missing features: Persons 3/5 now consume the tag, checklist-refresh and authentication contracts, as recorded above.
 
 **Verified:** 2026-10-30. **Scope:** PRPs 06 (tags) and 08 (search/filtering). The Person 4 acceptance flows pass in the current implementation: 13 unit tests and 32 desktop/mobile Playwright cases. This does not mark other owners' application features or production deployment complete.
 
@@ -18,7 +50,7 @@ This document provides a comprehensive checklist for evaluating the completeness
 
 **Reviewed:** 2026-10-30. **Scope:** [PRP 05 - Subtasks & Progress Tracking](PRPs/05-subtasks-progress.md) and [PRP 07 - Template System](PRPs/07-template-system.md), as assigned in [ASSIGNMENTS.md](ASSIGNMENTS.md).
 
-**Result:** Both PRPs have useful user flows and acceptance criteria, but need the clarifications below before implementation. This is a requirements review, not verification of working software: this repository has no application source, database, or executable tests. Existing implementation checkboxes remain unchanged.
+**Historical result:** Both PRPs needed the clarifications below before implementation. The initial review preceded source and tests; the recheck at `a3b4feb` found only Person 4's partial app. That missing-implementation assessment is superseded by [Persons 3 and 5: Implementation Verification](#persons-3-and-5-implementation-verification). Findings and handoff questions below are preserved as originally reviewed; current resolutions and remaining follow-up are recorded above.
 
 ### PRP 05: Subtasks & Progress Tracking
 
@@ -82,7 +114,7 @@ These are recorded handoffs, not completed decisions or notifications to other t
 | Person 5 (PRP 11) | How will two-user sessions be provisioned for API tests? | Provide reusable authenticated fixtures for 401/404 and unchanged-database authorization assertions on subtask and template routes. |
 | Person 3 | Resolve P3-07-01 jointly across the two owned PRPs; settle rename/edit/filter scope and the guide conflict. | Keep one canonical checklist contract and synchronize PRPs, guide, and evaluation criteria after decisions. |
 
-**Review completion:** User flows, technical requirements, edge cases, acceptance criteria, and testing requirements reviewed for both assigned PRPs. Open findings and dependency questions are recorded above; implementation readiness and runtime verification remain pending.
+**Review completion:** User flows, technical requirements, edge cases, acceptance criteria, and testing requirements were reviewed for both assigned PRPs. Historical findings/questions are retained above; implementation is now complete with the scoped verification and follow-up recorded at the top of this document.
 
 ---
 
@@ -268,13 +300,13 @@ These are recorded handoffs, not completed decisions or notifications to other t
 ---
 
 ### ✅ Feature 05: Subtasks & Progress Tracking
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** Complete; scoped verification recorded above (Person 3, 2026-10-30).
 
 **Implementation Checklist:**
-- [ ] Database: `subtasks` table with CASCADE delete
-- [ ] API endpoint: `POST /api/todos/[id]/subtasks`
-- [ ] API endpoint: `PUT /api/subtasks/[id]`
-- [ ] API endpoint: `DELETE /api/subtasks/[id]`
+- [x] Database: `subtasks` table with CASCADE delete
+- [x] API endpoint: `POST /api/todos/[id]/subtasks`
+- [x] API endpoint: `PUT /api/subtasks/[id]`
+- [x] API endpoint: `DELETE /api/subtasks/[id]`
 - [ ] Expandable subtasks section in UI
 - [ ] Add subtask input field
 - [ ] Subtask checkboxes
@@ -342,15 +374,15 @@ These are recorded handoffs, not completed decisions or notifications to other t
 ---
 
 ### ✅ Feature 07: Template System
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** Complete; scoped verification recorded above (Person 3, 2026-10-30). Snapshot metadata excludes tags and concrete due dates.
 
 **Implementation Checklist:**
-- [ ] Database: `templates` table
-- [ ] API endpoint: `GET /api/templates`
-- [ ] API endpoint: `POST /api/templates`
-- [ ] API endpoint: `PUT /api/templates/[id]`
-- [ ] API endpoint: `DELETE /api/templates/[id]`
-- [ ] API endpoint: `POST /api/templates/[id]/use`
+- [x] Database: `templates` table
+- [x] API endpoint: `GET /api/templates`
+- [x] API endpoint: `POST /api/templates`
+- [x] API endpoint: `PUT /api/templates/[id]`
+- [x] API endpoint: `DELETE /api/templates/[id]`
+- [x] API endpoint: `POST /api/templates/[id]/use`
 - [ ] "Save as Template" button
 - [ ] Save template modal (name, description, category)
 - [ ] "Use Template" button
@@ -417,11 +449,11 @@ These are recorded handoffs, not completed decisions or notifications to other t
 ---
 
 ### ✅ Feature 09: Export & Import
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** Complete; scoped verification recorded above (Person 5, 2026-10-30). Templates/presets are not backed up; no hard import-size cap is imposed.
 
 **Implementation Checklist:**
-- [ ] API endpoint: `GET /api/todos/export`
-- [ ] API endpoint: `POST /api/todos/import`
+- [x] API endpoint: `GET /api/todos/export`
+- [x] API endpoint: `POST /api/todos/import`
 - [ ] Export button in UI
 - [ ] Import button with file picker
 - [ ] JSON format with version field
@@ -487,18 +519,19 @@ These are recorded handoffs, not completed decisions or notifications to other t
 ---
 
 ### ✅ Feature 11: Authentication (WebAuthn)
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** Complete; scoped virtual-authenticator verification recorded above (Person 5, 2026-10-30). Logout is browser-local, not JWT revocation; recovery is excluded.
 
 **Implementation Checklist:**
-- [ ] Database: `users` and `authenticators` tables
-- [ ] API endpoint: `POST /api/auth/register-options`
-- [ ] API endpoint: `POST /api/auth/register-verify`
-- [ ] API endpoint: `POST /api/auth/login-options`
-- [ ] API endpoint: `POST /api/auth/login-verify`
-- [ ] API endpoint: `POST /api/auth/logout`
-- [ ] API endpoint: `GET /api/auth/me`
+- [x] Database: `users`, `authenticators`, and persistent auth attempt/rate-limit tables
+- [x] API endpoint: `POST /api/auth/register-options`
+- [x] API endpoint: `POST /api/auth/register-verify`
+- [x] API endpoint: `POST /api/auth/login-options`
+- [x] API endpoint: `POST /api/auth/login-verify`
+- [x] API endpoints: `POST /api/auth/enroll-options` and `POST /api/auth/enroll-verify`
+- [x] API endpoint: `POST /api/auth/logout`
+- [x] API endpoint: `GET /api/auth/me`
 - [ ] Auth utility: `lib/auth.ts` (createSession, getSession, deleteSession)
-- [ ] Middleware: `middleware.ts` (protect routes)
+- [x] Next.js 16 proxy: `proxy.ts` (protect `/` and `/calendar`; APIs authorize independently)
 - [ ] Login page: `/login`
 - [ ] Registration flow
 - [ ] Login flow

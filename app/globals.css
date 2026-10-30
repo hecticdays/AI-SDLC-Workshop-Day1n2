@@ -1,5 +1,44 @@
 @import "tailwindcss";
 
+.workspace-tools, .draft-actions, .template-toolbar, .template-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.workspace-tools { justify-content: flex-end; margin-bottom: 14px; }
+.task-row .delete-task { margin-left: auto; }
+@media (max-width: 700px) { .task-row .delete-task { position: absolute; right: 7px; top: 47px; } }
+.composer-draft { border-top: 1px solid var(--line); padding: 14px 16px; display: grid; gap: 14px; }
+.schedule-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.schedule-fields legend { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
+.schedule-fields label, .template-editor label { min-width: 0; }
+.schedule-fields input, .schedule-fields select { width: 100%; }
+.draft-checklist ul, .template-list { list-style: none; padding: 0; margin: 0; }
+.draft-checklist li, .checklist .subtask-details li { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 0; }
+.draft-checklist li > span, .checklist .subtask-details li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.checklist-add, .checklist-rename { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.checklist-add input, .checklist-rename input { flex: 1; min-width: 0; width: 100%; }
+.checklist-rename { flex: 1; }
+.checklist-add { margin-top: 8px; }
+.checklist-progress { margin: 9px 0; max-width: 420px; }
+.checklist-progress > div:first-child { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 5px; }
+.progress-track { height: 6px; overflow: hidden; border-radius: 3px; background: var(--line); }
+.progress-track > span { display: block; height: 100%; background: #3270cc; transition: width 180ms ease-out; }
+.progress-track.complete > span { background: #269358; }
+.checked-title { text-decoration: line-through; color: var(--muted); }
+.template-editor { display: grid; gap: 14px; }
+.template-editor textarea { width: 100%; min-height: 70px; resize: vertical; font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 5px; padding: 9px 11px; }
+.template-toolbar { justify-content: space-between; margin-bottom: 14px; }
+.template-toolbar label { flex: 1; }
+.template-list { max-height: 55dvh; overflow-y: auto; }
+.template-list > li { padding: 16px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.template-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.template-title > span, .template-list p, .template-meta { font-size: 12px; color: var(--muted); }
+.template-list p { margin-top: 7px; white-space: pre-wrap; }
+.template-meta { display: flex; flex-wrap: wrap; gap: 9px; margin: 10px 0; }
+@media (max-width: 600px) {
+  .workspace-tools { justify-content: flex-start; }
+  .schedule-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .draft-actions > select { max-width: 100%; }
+  .header-right { flex-wrap: wrap; }
+}
+
 :root {
   --page: #f6f8f7; --surface: #ffffff; --ink: #252b29; --muted: #65726c;
   --line: #e0e7e3; --accent: #17684d; --accent-soft: #e9f3ed; --danger: #b13644;
@@ -160,7 +199,8 @@ h1 { font-size: 34px; line-height: 1.15; font-weight: 600; }
 @media (min-width: 1400px) { main { padding-left: 65px; padding-right: 65px; } }
 @media (max-width: 1100px) { main { padding: 32px 25px; } .workspace { grid-template-columns: 190px minmax(0, 1fr); } .filter-bar { flex-wrap: wrap; } .search-box { flex-basis: 100%; } .filter-bar > select { flex: 1; max-width: none; } .task-tags { max-width: 150px; } }
 @media (max-width: 700px) {
-  .app-header { padding: 0 18px; height: 65px; } .brand { font-size: 21px; gap: 8px; } .brand-label, .header-date { display: none; } .header-right { gap: 9px; }
+  .app-header { padding: 14px 18px; height: auto; min-height: 65px; flex-wrap: wrap; gap: 12px; } .brand { font-size: 21px; gap: 8px; } .brand-label, .header-date { display: none; } .header-right { gap: 9px; width: 100%; min-width: 0; justify-content: space-between; }
+  .header-right > div[aria-busy] { flex: 1; min-width: 0; }
   .workspace { display: block; min-height: calc(100dvh - 65px); } .sidebar { display: none; } main { padding: 26px 18px; }
   .page-heading { margin-bottom: 22px; } h1 { font-size: 29px; } .page-heading .button { padding: 8px 10px; font-size: 11px; }
   .composer-main { padding: 10px 12px; gap: 7px; } .composer-main input { font-size: 12px; } .composer-main > svg { display: none; }

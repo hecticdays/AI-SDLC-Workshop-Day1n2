@@ -2,6 +2,16 @@
 
 Save frequently used todo patterns (title, priority, recurrence, reminder, and subtask checklist) as reusable templates for instant creation of common tasks.
 
+## Implementation Status
+
+**Last updated:** 2026-10-30. Complete (Person 3). All five endpoints below are implemented with session-derived ownership and runtime validation. [app/page.tsx](../app/page.tsx) supplies draft checklist capture, save/edit/delete, a manager with category filtering and settings preview, quick use, confirmation and pending/error handling. [lib/db.ts](../lib/db.ts) stores snapshots and atomically creates a fresh unchecked todo plus unchecked ordered checklist on each use, with no tags and no live link to the template or prior instances.
+
+Relative offsets are positive integer minutes resolved on the server using the Singapore clock at use time, not an absolute date from the browser. Recurrence/reminder settings require a due-date offset; invalid schedules are rejected on save/update/use. Valid stored checklist titles/order are preserved; corrupt stored checklist JSON or shape falls back to an empty checklist before atomic creation. Editing/deleting a template never changes earlier todos. Templates are excluded from JSON backups.
+
+Evidence: [tests/person3.test.ts](../tests/person3.test.ts), [tests/09-templates.spec.ts](../tests/09-templates.spec.ts), including rollback on child insertion failure, snapshot isolation, defaults, validation, partial updates and server-resolved one-minute deadlines. Combined verification: 35 passing unit/DB tests; loaded `lib/**` coverage 87.53% lines / 89.25% branches / 88.73% functions; Next.js 16.4.3 build succeeds; 62 desktop/mobile Playwright cases pass (32 prior + 30 new). See [evaluation](../EVALUATION.md#persons-3-and-5-implementation-verification) for limits; this is not proof of all scale/performance targets.
+
+**Example precedence:** Original design snippets below are historical, not copy-ready current APIs. Current user-scoped helpers, runtime schemas and transactional `templates.use` supersede the unscoped/non-transactional examples and their inconsistent subtask signatures. Unticked boxes are retained verification plans rather than a missing-implementation status.
+
 **Dependencies**: Builds on the `todos` model from [PRP 01 - Todo CRUD Operations](./01-todo-crud-operations.md); reuses `priority` from [PRP 02 - Priority System](./02-priority-system.md), recurrence fields from [PRP 03 - Recurring Todos](./03-recurring-todos.md), and `reminder_minutes` from [PRP 04 - Reminders & Notifications](./04-reminders-notifications.md). Reproduces the subtask shape (`title`, `position`) from [PRP 05 - Subtasks & Progress Tracking](./05-subtasks-progress.md) via JSON serialization rather than a live foreign-key relationship.
 
 [← PRP Index](./README.md)
@@ -12,7 +22,7 @@ The Template System lets a user capture the recurring "shape" of a todo — its 
 
 Templates deliberately exclude two things that are inherently instance-specific: a concrete **due date** (only a relative offset is stored) and **tags** (chosen fresh each time a todo is created, since tag relevance can vary per instance).
 
-> **Note on source conflict**: `USER_GUIDE.md` §9 describes templates as excluding subtasks ("added after creation"). This PRP instead follows `.github/copilot-instructions.md` and `EVALUATION.md` (Feature 07), which are explicit and detailed that subtasks **are** captured via `subtasks_json` and recreated on use — see Technical Requirements below. Treat this PRP's schema as authoritative; the user guide's description is a simplification.
+> **Source conflict resolved:** [USER_GUIDE.md](../USER_GUIDE.md#9-todo-templates) now agrees that checklist titles/order are captured and recreated unchecked. Templates exclude tags and concrete due dates, not subtasks.
 
 ## User Stories
 
@@ -286,7 +296,7 @@ function TemplateCard({ template, onUse, onDelete }: { template: Template; onUse
 - **Duplicate template names**: unlike tags, template names are **not** required to be unique per user — the schema has no `UNIQUE` constraint on `(user_id, name)`. Two templates named "Weekly Review" are valid and both appear in the list.
 - **Large `subtasks_json`**: no enforced cap on subtask count per template; very large lists should still round-trip correctly through `JSON.stringify`/`JSON.parse`, but the UI should scroll rather than break layout in the manager preview.
 - **Template referencing a since-deleted tag or category convention**: category is a free-text field, not a foreign key, so there is no orphan risk — an arbitrary/retired category string simply displays as-is.
-- **Recurrence without a due date**: if a template has `is_recurring: true` but no `due_date_offset_minutes`, the resulting todo violates PRP 03's rule that recurring todos require a due date. The `use` endpoint should surface a validation error (or, per product decision, silently unset `is_recurring` on the created todo) — recommended: reject template creation itself if `is_recurring` is true and `due_date_offset_minutes` is null, enforcing the invariant at save-time instead of use-time.
+- **Recurrence/reminder without a due date**: reject save/update/use when recurrence or a reminder is configured without a positive integer `due_date_offset_minutes`. The implementation does not silently clear these settings.
 
 ## Acceptance Criteria
 

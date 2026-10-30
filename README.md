@@ -1,10 +1,23 @@
 # Complete Setup Guide: Todo App Development with GitHub Copilot
 
-## Person 4 Build: Tags and Search
+## Implemented Build: Persons 3, 4 and 5
 
-This branch now includes a runnable Next.js 16 / React 19 / Tailwind 4 implementation of PRPs 06 and 08. The rest of this guide describes the full target app, not features already delivered here.
+**Last updated:** 2026-10-30. This branch includes runnable Next.js 16 / React 19 / Tailwind 4 implementations of subtasks/progress, templates, tags/search, JSON/CSV portability and passkey authentication (PRPs 05-09 and 11). The remaining walkthrough also describes the full target app; it is not evidence that every other owner's feature or production deployment is complete.
 
-From the repository folder, with Node.js 22+ and npm installed:
+From the repository folder, with Node.js 22+ and npm installed, run the normal authenticated app in PowerShell:
+
+```powershell
+npm install
+$env:JWT_SECRET = & node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+$env:APP_ORIGIN = 'http://localhost:3000'
+$env:WEBAUTHN_RP_ID = 'localhost'
+$env:DATABASE_PATH = 'todos.db'
+npm run dev
+```
+
+Open http://localhost:3000 and register a passkey. `JWT_SECRET` must be private and at least 32 bytes; the expression generates one without printing it. These variables apply to this terminal session. For repeat local runs or production, provision the same private secret through untracked environment configuration/secret management; generating a new secret invalidates existing sessions. Keep `DEMO_MODE` unset for normal authentication. Use `localhost`, not `127.0.0.1`, for passkey setup: Chromium rejects IP RP IDs. If using another port, set `APP_ORIGIN` to that exact origin.
+
+For the optional sign-in-free demo only:
 
 ```bash
 npm install
@@ -22,21 +35,27 @@ Open the URL printed by Next.js (normally http://127.0.0.1:3000). Demo mode bind
 - Filtered section counts, distinct empty states, deleted-tag fallback, keyboard-accessible native dialogs, responsive layout, and light/dark themes.
 - Visible active-filter summary, independent tag-filter clearing, cached debounced filtering, partial-update preservation, and transactional edit/import tag helpers.
 
-Tag uniqueness uses trimmed names and SQLite `NOCASE` (ASCII case folding); non-ASCII case variants are not normalized. Coordinate this contract with Person 5's importer. Tag text switches between black and white for WCAG AA contrast rather than forcing white text on pale custom colors. Presets remain browser-local but are additionally account-scoped so shared-browser accounts do not share saved views.
+Tag uniqueness and import reuse share trimmed names and SQLite `NOCASE` (ASCII case folding); non-ASCII case variants are not normalized. Tag text switches between black and white for WCAG AA contrast rather than forcing white text on pale custom colors. Presets remain browser-local but are additionally account-scoped so shared-browser accounts do not share saved views.
 
-### Integration Handoff
+- **Person 3:** Owned subtask create/rename/toggle/delete, cascading parent deletion, independent completion and client-safe rounded progress; optimistic toggles reconcile with server state and pending controls prevent competing mutations. Templates support full CRUD, draft checklists, manager/category filtering and quick use. Each use atomically creates a fresh unchecked todo/checklist, without tags or a live template link; positive relative offsets resolve on the server, and recurrence/reminders require an offset.
+- **Person 5 (portability):** Strict version-1 JSON export/transactional restore preserves historical metadata and checklist array order with fresh todo/subtask IDs, canonical UTC due dates, tag reuse/deduplication and rollback. Notification stamps reset without triggering completion/recurrence/notification actions. CSV uses `csv-stringify` with quoting and formula escaping; JSON remains the relational backup format.
+- **Person 5 (auth):** SimpleWebAuthn 13 registration/login and recent-auth additional-passkey enrollment; browser/account/operation-bound SQLite attempts with 300-second expiry and atomic consumption, required user verification, login/logout UI and Next.js 16 `proxy.ts` protection of `/` and `/calendar`. API ownership checks remain independent of page redirects.
 
-- **Person 1:** `lib/db.ts` supplies baseline users/todos/subtasks tables and `todoDB.findAllByUser`/`create`, plus `GET`/`POST /api/todos`, solely to exercise Person 4's features. Use `tagDB.replaceForTodo(todoId, tagIds, userId)` inside your edit transaction for ownership-checked, atomic tag replacement (duplicate IDs are collapsed; an empty selection clears tags). Existing-task tags can already be edited independently in the current UI. Full CRUD, due-date editing, recurrence, calendar, and other features remain your integration work. The main UI stays in `app/page.tsx` per repository convention.
-- **Person 3:** Nested subtasks are read for search/progress display; subtask CRUD is not implemented here. After successful checklist edits or template use, dispatch `window.dispatchEvent(new Event('todo-app:todos-changed'))` from client code so search refreshes immediately. Renames, deletions and new checklist-bearing tasks are covered by integration-contract tests.
-- **Person 5 (import):** Use `tagDB.findByName(name, userId)` or `tagDB.findOrCreateByName(userId, input)` to reuse the same trimmed/NOCASE name contract. Resolution returns `{ tag, created }`; existing colors win, user ownership is retained, and new tags roll back with an outer transaction. Use `replaceForTodo` to deduplicate resolved associations. Import endpoints and their payload validation remain your work.
-- **Person 5:** Replace/integrate `lib/auth.ts` with the passkey flow. It currently verifies an HS256 JWT in the `session` cookie, fails closed without a valid session, checks that the user exists, and exports `createSession`/`getSession`/`deleteSession`. Set a private `JWT_SECRET` of at least 32 bytes. `GET /api/auth/me` exposes the session; no passkey login/enrollment endpoints or page-redirect protection are claimed by this build.
-- **Deployment:** `npm run dev` uses normal authentication, not the demo. Set `DATABASE_PATH` for persistent SQLite storage and `APP_ORIGIN` to your public origin behind a reverse proxy; otherwise write-request origin checks use the incoming Host header and request scheme. Never deploy with the test-only JWT secret in the Playwright configuration. This branch is not yet a complete production-ready Todo App.
+### Integration and Remaining Limits
+
+- **Other owners:** Todo storage and supporting create/update/delete routes now exist for the integrated flows; this update does not certify full Person 1/2, recurring-successor/notification or calendar delivery. Client mutations refresh the nested searchable collection. The main UI remains in `app/page.tsx` per repository convention.
+- **Logout/recovery:** Logout clears this browser's cookies only; there is no server-side revocation of copied JWTs. Account recovery is not implemented. Adding another passkey requires recent `authTime` within five minutes; sign in again if the session is older.
+- **Backup boundary:** Templates and saved filter presets are excluded. CSV is one-way and omits tag/checklist relations. Imports intentionally add copies rather than merging todos; tags reuse the importing user's matching names/colors.
+- **Import resources:** No hard size limit, per PRP 09. Files over 10 MiB show a progress warning, but complete-document parsing and synchronous writes still require upstream request/resource limits before deployment.
+- **Rate limits:** Per-browser by default. IP buckets apply only with `AUTH_TRUST_PROXY=true` and valid forwarded IPs; enable this only behind a trusted proxy that strips/overwrites client forwarding headers and prevents untrusted direct access. This is not a global abuse barrier; distinct account/conflict errors also permit username enumeration.
+- **Deployment:** Use HTTPS, exact public `APP_ORIGIN`, matching hostname `WEBAUTHN_RP_ID`, a stable private JWT secret of at least 32 bytes, and stable private persistent SQLite via `DATABASE_PATH`. Ephemeral/read-only/serverless storage is not a persistence plan; coordinate writers/instances around the actual SQLite deployment. Never deploy demo mode or Playwright test secrets. No production audit or real-device compatibility certification is claimed.
 - **Existing databases:** The baseline creates missing tables, not a full migration system. A pre-existing case-sensitive tags table needs a coordinated migration and duplicate-name resolution before adopting the case-insensitive contract.
 
 ### Verification
 
 ```bash
 npm test
+npm run test:coverage
 npm run typecheck
 npm run lint
 npm run build
@@ -44,7 +63,9 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Unit tests cover filters, Singapore boundaries, preset validation/storage, tag isolation, idempotency, cascade deletion, transactional rollback, and the demo guard. Playwright runs the tag and search workflows on desktop and mobile, including signed test sessions, unauthorized/cross-user API checks, and light/dark screenshots. It uses `.person4-e2e.db` and a test-only signing secret, independent of `todos.db` and `demo.db`. Screenshots/traces are written under `test-results/` (gitignored). Authentication fixtures do not depend on test-file execution order or a not-yet-built passkey UI.
+**Recorded combined verification (2026-10-30):** `npm test` passes 35 unit/DB tests. `npm run test:coverage` reports 87.53% line, 89.25% branch and 88.73% function coverage on loaded `lib/**`, not whole-app coverage. `npm run build` succeeds with Next.js 16.4.3. `npx playwright test` passes all 62 desktop/mobile cases: 32 prior Person 4 cases plus 30 new cases for subtasks/templates/portability/authentication. These are supplied implementation-run results; the documentation-only refresh does not rerun them or claim every aspirational acceptance criterion.
+
+Unit/DB tests cover filters, timezone boundaries, presets, tags, subtasks/progress, template snapshots/rollback, historical import validation/rollback, CSV safety, auth attempts/tokens and the demo guard. Playwright adds virtual-authenticator ceremonies, API isolation, retryable UI, JSON/CSV downloads and relational restoration to the existing tag/search workflows. Tests use `.person4-e2e.db` and test-only signing configuration, independent of `todos.db` and `demo.db`; suites provision their own sessions rather than depending on test-file order. Screenshots/traces are written under `test-results/` (gitignored).
 
 **Person 4 completion:** Verified on 2026-10-30 with 13 unit tests and 32 desktop/mobile browser cases. This includes failed-save rollback/retry, modal focus, AA tag-text contrast, deleted-tag presets, storage-full errors, exact debounce timing, immediate cross-feature refresh, 60-task cascade integrity, all-filter performance under 100ms for 1000 todos, and average warm tag CRUD latency under 300ms. `EVALUATION.md` and the assigned PRPs record the completed acceptance criteria. Search intentionally covers todo/subtask titles, not tag names, resolving the older evaluation checklist in favor of PRP 08.
 
@@ -277,13 +298,15 @@ todo-app/
 ## 5. Run the Application
 
 ### Start Development Server
+Use the normal-app environment setup at the top of this guide first (`JWT_SECRET`, `APP_ORIGIN` and `WEBAUTHN_RP_ID`). Keep the same private secret between restarts when sessions should remain valid.
+
 ```bash
 npm run dev
 ```
 
 Expected output:
 ```
-  ▲ Next.js 16.0.1
+   ▲ Next.js 16.4.3
   - Local:        http://localhost:3000
   - Environments: .env.local
 

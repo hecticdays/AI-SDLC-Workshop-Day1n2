@@ -352,6 +352,8 @@ Save frequently used todo patterns as reusable templates for instant creation of
    - Priority
    - Recurrence settings (if applicable)
    - Reminder timing (if applicable)
+  - Draft checklist titles (optional)
+  - Relative due-date offset in minutes (required for recurrence/reminders)
 2. Click **"💾 Save as Template"** button (appears when title is filled)
 3. Enter template details in modal:
    - **Name**: Template identifier (required)
@@ -383,6 +385,7 @@ Access via **"📋 Templates"** button to:
 - View all templates in a list
 - See template details (name, description, category)
 - Preview settings (priority, recurrence)
+- Filter by category and edit template settings/checklist
 - Use templates with one click
 - Delete templates no longer needed
 
@@ -412,11 +415,15 @@ Templates preserve:
 - ✅ Reminder timing (minutes before due)
 - ✅ Category information
 - ✅ Description
+- ✅ Ordered checklist titles (recreated unchecked)
+- ✅ Relative due-date offset, resolved by the server at use time
 
 **Note**: Templates do NOT include:
-- ❌ Specific due dates (you set when creating)
-- ❌ Tags (selected when creating from template)
-- ❌ Subtasks (added after creation)
+- ❌ Concrete due dates (only a relative offset is saved)
+- ❌ Tags (new instances start without tags)
+- ❌ Completion state (each todo and checklist starts unchecked)
+
+Templates are snapshots: editing/deleting them does not change previously created todos. They are not included in JSON backups.
 
 ### Template Categories
 
@@ -746,18 +753,25 @@ Backup your todos, share them between devices, or analyze data in spreadsheets w
 - ✅ Best for backup and data transfer
 - ✅ Human-readable format
 
-**Fields Included**:
+**Version-1 JSON Example** (source IDs and ownership are not exported):
 ```json
 {
-  "id": 1,
-  "title": "Sample Todo",
-  "completed": false,
-  "due_date": "2025-11-10T14:00",
-  "priority": "high",
-  "is_recurring": true,
-  "recurrence_pattern": "weekly",
-  "reminder_minutes": 60,
-  "created_at": "2025-11-02T10:30:00"
+  "version": 1,
+  "exported_at": "2026-10-30T14:00:00+08:00",
+  "todos": [
+    {
+      "title": "Sample Todo",
+      "completed": false,
+      "due_date": "2025-11-10T06:00:00.000Z",
+      "priority": "high",
+      "is_recurring": true,
+      "recurrence_pattern": "weekly",
+      "reminder_minutes": 60,
+      "created_at": "2025-11-02T10:30:00+08:00",
+      "subtasks": [{ "title": "Prepare notes", "completed": false, "position": 0 }],
+      "tags": [{ "name": "Work", "color": "#008080" }]
+    }
+  ]
 }
 ```
 
@@ -808,12 +822,18 @@ ID,Title,Completed,Due Date,Priority,Recurring,Pattern,Reminder
 - Recurrence settings
 - Reminder timings
 - Creation timestamps
+- Ordered subtasks and their completion state (positions normalized to array order)
+- Tag associations (matching importing-user names reuse existing tags/colors)
+
+Version-1 JSON is validated before one atomic restore. Historical due dates are allowed and normalized to canonical UTC instants. Restoration resets notification stamps without generating recurring successors or sending notifications. Reimporting creates more todo copies, not a merge. CSV is one-way and does not restore checklist/tag relations.
 
 **What's NOT Imported**:
 - ❌ Original todo IDs (new IDs assigned)
 - ❌ User associations (links to importing user)
-- ❌ Tags (must be recreated/reassigned)
-- ❌ Subtasks (if not in export format)
+- ❌ Original subtask/tag IDs (subtasks receive fresh IDs; tags may reuse existing local IDs)
+- ❌ Templates or saved filter presets
+
+There is no hard import-size cap. Files over 10 MiB show a progress warning; deployments still need upstream request/resource limits.
 
 #### Import Validation
 
