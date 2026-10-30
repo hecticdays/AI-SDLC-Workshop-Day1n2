@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import type { Holiday, Todo } from '@/lib/db';
 import { generateCalendarGrid, todosForSingaporeDate } from '@/lib/calendar';
-import { formatSingaporeDate } from '@/lib/timezone';
+import { formatSingaporeDate, getSingaporeNow } from '@/lib/timezone';
 
 type CalendarDashboardProps = { initialMonth: { year: number; month: number } };
 
@@ -24,7 +24,7 @@ export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
-  const today = formatSingaporeDate(new Date(), 'yyyy-MM-dd');
+  const today = formatSingaporeDate(getSingaporeNow(), 'yyyy-MM-dd');
   const days = useMemo(() => generateCalendarGrid(month.year, month.month, today), [month.year, month.month, today]);
 
   useEffect(() => {
@@ -109,7 +109,10 @@ export function CalendarDashboard({ initialMonth }: CalendarDashboardProps) {
                 aria-label={`${day.date}${holiday ? `, ${holiday.name}` : ''}, ${dayTodos.length} tasks`}
                 onClick={() => setSelectedDate(day.date)}
               >
-                <span className="calendar-day-number">{Number(day.date.slice(-2))}</span>
+                <span className="calendar-day-header">
+                  <span className="calendar-day-number">{Number(day.date.slice(-2))}</span>
+                  {dayTodos.length > 0 && <span className="calendar-count" aria-hidden="true">{dayTodos.length}</span>}
+                </span>
                 {holiday && <span className="holiday-name" title={holiday.name}>{holiday.name}</span>}
                 {dayTodos.slice(0, 3).map((todo) => <span className={`calendar-todo priority-${todo.priority}`} key={todo.id}>{todo.title}</span>)}
                 {dayTodos.length > 3 && <span className="calendar-overflow">+{dayTodos.length - 3} more</span>}

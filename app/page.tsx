@@ -131,7 +131,7 @@ function SubtaskList({ todo, busy, onAction, onChanged }: { todo: Todo; busy: bo
     finally { setOptimisticCompletion(null); }
   }
   return <div className="checklist">
-    {progress.total > 0 && <div className="checklist-progress"><div><span>{progress.completed}/{progress.total} subtasks</span><span>{progress.percent}%</span></div>
+    {progress.total > 0 && <div className="checklist-progress"><div><span>{progress.completed}/{progress.total} subtasks completed ({progress.percent}%)</span></div>
       <div role="progressbar" aria-label={`Subtask progress for ${todo.title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} className={`progress-track ${progress.percent === 100 ? 'complete' : ''}`}><span style={{ width: `${progress.percent}%` }} /></div></div>}
     <details className="subtask-details"><summary>Subtasks</summary><ul>{children.map((child) => <li key={child.id}>
       <input type="checkbox" aria-label={`Complete subtask ${child.title}`} checked={child.completed} disabled={busy} onChange={(event) => void toggle(child, event.target.checked)} />
@@ -531,7 +531,7 @@ export default function Home() {
               <div className="task-content"><h3>{todo.title}</h3>
                 <div className="task-meta"><span className={`priority ${todo.priority}`}><span />{todo.priority}</span>
                   {todo.due_date && <time dateTime={todo.due_date}>{formatSingaporeDate(todo.due_date, 'd MMM, HH:mm')}</time>}
-                  {todo.is_recurring && <span className="recurrence-label">Repeats {todo.recurrence_pattern}</span>}
+                  {todo.is_recurring && <span className="recurrence-label">🔄 Repeats {todo.recurrence_pattern}</span>}
                   {todo.reminder_minutes !== null && <span className="reminder-label" aria-label={`Reminder ${reminderLabel(todo.reminder_minutes)} before due`}>🔔 {reminderLabel(todo.reminder_minutes)}</span>}
                 </div>
                 <SubtaskList todo={todo} busy={busy} onAction={perform} onChanged={refresh} />
