@@ -43,19 +43,34 @@ export function createAuthStore(database: Database.Database) {
       bucket TEXT PRIMARY KEY, count INTEGER NOT NULL, expires INTEGER NOT NULL
     );
   `);
-  const findUser = (username: string) => database.prepare('SELECT id, username FROM users WHERE username = ?')
+  const columns = database.prepare('PRAGMA table_info(authenticators)').all() as { name: string }[];
+  const legacyKeys = !columns.some(column => column.name === 'credential_public_key')
+    && columns.some(column => column.name === 'public_key');
+  const readCredential = (row: Credential & { public_key?: string }): Credential => legacyKeys
+    ? { ...row, credential_public_key: Buffer.from(row.public_key!, 'base64url') } : row;
+  const findUser = (username: string) => database.prepare(legacyKeys
+    ? 'SELECT id, username FROM users WHERE username = ? COLLATE NOCASE'
+    : 'SELECT id, username FROM users WHERE username = ?')
     .get(username) as AuthUser | undefined;
-  const credentials = (userId: number) => database.prepare('SELECT * FROM authenticators WHERE user_id = ?')
-    .all(userId) as Credential[];
+  const credentials = (userId: number) => (database.prepare('SELECT * FROM authenticators WHERE user_id = ?')
+    .all(userId) as Credential[]).map(readCredential);
   const addCredential = (userId: number, credential: { id: string; publicKey: Uint8Array; counter: number }) => {
+    if (legacyKeys) {
+      database.prepare(`INSERT INTO authenticators(user_id, credential_id, public_key, counter, device_type)
+        VALUES (?, ?, ?, ?, ?)`).run(userId, credential.id, Buffer.from(credential.publicKey).toString('base64url'),
+          credential.counter ?? 0, 'unknown');
+      return;
+    }
     database.prepare('INSERT INTO authenticators(user_id, credential_id, credential_public_key, counter) VALUES (?, ?, ?, ?)')
       .run(userId, credential.id, Buffer.from(credential.publicKey), credential.counter ?? 0);
   };
   return {
     findUser, credentials,
     handle(userId: number) {
+      const handle = legacyKeys && credentials(userId).length
+        ? Buffer.from(String(userId)).toString('base64url') : opaqueToken();
       database.prepare('INSERT INTO auth_handles(user_id, handle) VALUES (?, ?) ON CONFLICT(user_id) DO NOTHING')
-        .run(userId, opaqueToken());
+        .run(userId, handle);
       return (database.prepare('SELECT handle FROM auth_handles WHERE user_id = ?').get(userId) as { handle: string }).handle;
     },
     saveAttempt(attempt: Attempt, now = Date.now()) {
@@ -99,8 +114,9 @@ export function createAuthStore(database: Database.Database) {
       catch { throw new AuthError('Passkey already registered', 409); }
     },
     credential(id: string, userId: number) {
-      return database.prepare('SELECT * FROM authenticators WHERE credential_id = ? AND user_id = ?')
+      const row = database.prepare('SELECT * FROM authenticators WHERE credential_id = ? AND user_id = ?')
         .get(id, userId) as Credential | undefined;
+      return row ? readCredential(row) : undefined;
     },
     updateCounter(credential: Credential, next: number) {
       const previous = credential.counter ?? 0;

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { todoDB, todoInputSchema } from '@/lib/db';
+import { todoDB } from '@/lib/db';
 import { apiError, readBody, requireSession } from '@/lib/api';
 
 export async function GET(request: Request) {
@@ -12,6 +12,6 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const session = await requireSession(request);
-    return NextResponse.json(todoDB.create(session.userId, todoInputSchema.parse(await readBody(request))), { status: 201 });
+    return NextResponse.json(todoDB.create(session.userId, await readBody(request)), { status: 201 });
   } catch (error) { return apiError(error); }
 }

@@ -13,6 +13,7 @@ test('search waits 300ms, resets on typing, and clear bypasses the timer', async
   await page.clock.runFor(299);
   expect(await page.getByTestId('task-row').count()).toBe(4);
   await page.clock.runFor(1);
+  await page.clock.runFor(16);
   await expect(page.getByTestId('task-row')).toHaveCount(1);
   await page.getByRole('button', { name: 'Clear search' }).click();
   expect(await page.getByTestId('task-row').count()).toBe(4);

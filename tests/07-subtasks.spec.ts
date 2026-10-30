@@ -1,5 +1,14 @@
 import { test, expect, createTodo } from './helpers';
 
+test('one-minute relative task deadlines survive API validation', async ({ request }) => {
+  const before = Date.now();
+  const response = await request.post('/api/todos', { data: {
+    title: 'Relative deadline', due_date_offset_minutes: 1, is_recurring: true, recurrence_pattern: 'weekly',
+  } });
+  expect(response.status()).toBe(201);
+  expect(Date.parse((await response.json()).due_date)).toBeGreaterThanOrEqual(before + 60_000);
+});
+
 test('API checklist mutations enforce ownership, strict JSON and cascading deletion', async ({ request, account }) => {
   const todo = await createTodo(request, 'Checklist API');
   const endpoint = `/api/todos/${todo.id}/subtasks`;
@@ -56,6 +65,7 @@ test('checklist add, rename, toggle, collapse, remove and parent completion stay
   await row.getByRole('button', { name: 'Complete task Checklist journey', exact: true }).click();
   await expect(row.getByRole('button', { name: 'Reopen task Checklist journey', exact: true })).toBeVisible();
   await row.getByRole('button', { name: 'Delete task Checklist journey', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Delete todo?', exact: true }).getByRole('button', { name: 'Delete', exact: true }).click();
   await expect(row).toHaveCount(0);
 });
 

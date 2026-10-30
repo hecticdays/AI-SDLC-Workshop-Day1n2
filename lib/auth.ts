@@ -38,6 +38,8 @@ export async function deleteSession(): Promise<void> {
   });
 }
 
+export const clearSession = deleteSession;
+
 export async function getRecentlyAuthenticatedSession(): Promise<Session | null> {
   if (demoEnabled()) return null;
   const token = (await cookies()).get(COOKIE_NAME)?.value;

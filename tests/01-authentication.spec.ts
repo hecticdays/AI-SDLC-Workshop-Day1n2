@@ -15,8 +15,9 @@ async function authenticator(page: Page) {
 }
 
 async function submit(page: Page, username: string, action: 'Register' | 'Login') {
+  await page.getByRole('tab', { name: action === 'Register' ? 'Create account' : 'Sign in', exact: true }).click();
   await page.getByLabel('Username', { exact: true }).fill(username);
-  await page.getByRole('button', { name: action, exact: true }).click();
+  await page.getByRole('button', { name: action === 'Register' ? 'Create passkey' : 'Continue with passkey', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
 }
 
@@ -158,7 +159,7 @@ test('enrollment requires recent authentication even with a valid old session', 
 test('real signed ceremonies work independently of the task-page build', async ({ page, context, baseURL }) => {
   const { client, authenticatorId } = await authenticator(page);
   await page.goto('/login');
-  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await expect(page.locator('#auth-title')).toBeVisible();
   await page.addScriptTag({ path: resolve('node_modules/@simplewebauthn/browser/dist/bundle/index.umd.min.js') });
   async function ceremony(operation: 'register' | 'login' | 'enroll', username?: string, credentialId?: string) {
     return page.evaluate(async ({ operation, username, credentialId }) => {

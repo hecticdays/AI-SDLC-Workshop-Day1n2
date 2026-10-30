@@ -60,6 +60,22 @@ test('browser limits are independent without a trusted IP and never block truste
     for (let count = 0; count < 300; count++) store.limit('ip:192.0.2.1', 300);
     assert.equal((await authEndpoint(request(), 'register')).status, 429);
     jar.set('auth_browser', browserA);
+    const user = store.register('session-fixture', 'session-handle', {
+      id: 'session-key', publicKey: new Uint8Array([1, 2]), counter: 0,
+    });
+    const { SignJWT } = await import('jose');
+    const { createSession, getSession, getRecentlyAuthenticatedSession } = await import('../lib/auth');
+    const legacy = await new SignJWT({ userId: user.id, username: user.username })
+      .setProtectedHeader({ alg: 'HS256' }).setIssuedAt().setExpirationTime('7d')
+      .sign(new TextEncoder().encode(process.env.JWT_SECRET));
+    jar.set('session', legacy);
+    assert.equal((await getSession())?.userId, user.id);
+    assert.equal(await getRecentlyAuthenticatedSession(), null);
+    assert.equal((await authEndpoint(request(), 'enroll')).status, 429);
+    await createSession(user);
+    assert.equal((await getRecentlyAuthenticatedSession())?.userId, user.id);
+    jar.set('session', await signSessionToken({ id: 999999, username: 'deleted-account' }));
+    assert.equal(await getSession(), null);
     jar.set('session', 'existing-session');
     assert.equal((await authEndpoint(request('https://attacker.invalid'), 'logout')).status, 400);
     assert.equal(jar.get('session')?.value, 'existing-session');
@@ -152,4 +168,87 @@ test('session tokens reject forgery, expiry, malformed claims, and missing secre
   delete process.env.JWT_SECRET;
   assert.equal(await verifySessionToken(token), null);
   await assert.rejects(() => signSessionToken({ id: 7, username: 'alice' }));
+});
+
+test('legacy session-token exports use canonical verification without a fallback key', async () => {
+  const previous = process.env.JWT_SECRET;
+  try {
+    process.env.JWT_SECRET = 'auth-unit-test-only-secret-minimum-32-bytes';
+    const { getSessionVerificationKey, verifySessionToken: verifyLegacyToken } = await import('../lib/session-token');
+    const { SignJWT } = await import('jose');
+    const token = await new SignJWT({ userId: 7, username: 'alice' }).setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt().setExpirationTime('7d').sign(getSessionVerificationKey());
+    assert.equal((await verifySessionToken(token))?.userId, 7);
+    assert.equal((await verifySessionToken(token))?.authTime, undefined);
+    assert.equal(await verifyLegacyToken(token), true);
+    const tooOld = await new SignJWT({ userId: 7, username: 'alice' }).setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt(Math.floor(Date.now() / 1000) - 8 * 86400).setExpirationTime('1d').sign(getSessionVerificationKey());
+    assert.equal(await verifyLegacyToken(tooOld), false);
+    delete process.env.JWT_SECRET;
+    assert.throws(() => getSessionVerificationKey(), /JWT_SECRET/);
+    assert.equal(await verifyLegacyToken(token), false);
+  } finally {
+    if (previous === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previous;
+  }
+});
+
+test('auth store adapts remote text credentials without replacing schema or legacy handles', () => {
+  const database = new Database(':memory:');
+  try {
+    database.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '');
+      CREATE TABLE authenticators (credential_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+        public_key TEXT NOT NULL, counter INTEGER NOT NULL DEFAULT 0, transports TEXT NOT NULL DEFAULT '[]',
+        device_type TEXT NOT NULL, backed_up INTEGER NOT NULL DEFAULT 0);
+      INSERT INTO users VALUES (1, 'alice', 'Alice');
+      INSERT INTO authenticators VALUES ('legacy-key', 1, 'AQI', 0, '[]', 'singleDevice', 0);
+    `);
+    const store = createAuthStore(database);
+    assert.equal(store.findUser('ALICE')?.id, 1);
+    assert.throws(() => store.register('ALICE', 'duplicate', { id: 'duplicate-key', publicKey: new Uint8Array([1]), counter: 0 }), /taken/);
+    assert.equal(store.handle(1), Buffer.from('1').toString('base64url'));
+    assert.deepEqual(store.credential('legacy-key', 1)?.credential_public_key, Buffer.from([1, 2]));
+    assert.equal(store.credential('legacy-key', 2), undefined);
+    store.updateCounter(store.credential('legacy-key', 1)!, 1);
+    assert.equal(store.credential('legacy-key', 1)?.counter, 1);
+    const user = store.register('bob', 'opaque-b', { id: 'bob-key', publicKey: new Uint8Array([3, 4]), counter: 0 });
+    assert.equal(store.handle(user.id), 'opaque-b');
+    assert.deepEqual(store.credentials(user.id)[0].credential_public_key, Buffer.from([3, 4]));
+    store.enroll(user.id, { id: 'extra-key', publicKey: new Uint8Array([5, 6]), counter: 0 });
+    assert.equal(store.credentials(user.id).length, 2);
+    assert.equal(createAuthStore(database).handle(1), Buffer.from('1').toString('base64url'));
+    assert.deepEqual(database.prepare('SELECT display_name FROM users WHERE id = 1').get(), { display_name: 'Alice' });
+  } finally { database.close(); }
+});
+
+test('proxy protects pages and remote API matchers using canonical tokens without a database import', async () => {
+  const previous = { JWT_SECRET: process.env.JWT_SECRET, DEMO_MODE: process.env.DEMO_MODE };
+  try {
+    process.env.JWT_SECRET = 'auth-unit-test-only-secret-minimum-32-bytes';
+    delete process.env.DEMO_MODE;
+    const { NextRequest } = await import('next/server');
+    const { proxy, config } = await import('../proxy');
+    assert.deepEqual(config.matcher, ['/', '/calendar/:path*', '/api/todos/:path*', '/api/holidays/:path*']);
+    for (const path of ['/', '/calendar', '/calendar/week']) {
+      const response = await proxy(new NextRequest(`http://localhost:3000${path}`));
+      assert.equal(response.status, 307);
+      assert.equal(response.headers.get('location'), 'http://localhost:3000/login');
+    }
+    assert.equal((await proxy(new NextRequest('http://localhost:3000/api/todos'))).status, 401);
+    const token = await signSessionToken({ id: 1, username: 'alice' });
+    assert.equal((await proxy(new NextRequest('http://localhost:3000/calendar', {
+      headers: { cookie: `session=${token}` },
+    }))).headers.get('x-middleware-next'), '1');
+    delete process.env.JWT_SECRET;
+    assert.equal((await proxy(new NextRequest('http://localhost:3000/calendar', {
+      headers: { cookie: `session=${token}` },
+    }))).status, 307);
+  } finally {
+    for (const key of ['JWT_SECRET', 'DEMO_MODE'] as const) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
 });

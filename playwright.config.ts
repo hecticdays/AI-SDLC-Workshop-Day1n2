@@ -16,6 +16,7 @@ export default defineConfig({
     url: 'http://localhost:3107', reuseExistingServer: false, timeout: 120_000,
     env: { DEMO_MODE: 'false', DATABASE_PATH: process.env.PERSON4_TEST_DATABASE,
       APP_ORIGIN: 'http://localhost:3107', WEBAUTHN_RP_ID: 'localhost',
-      JWT_SECRET: 'person4-test-only-secret-not-for-deployment-0000' },
+      JWT_SECRET: 'person4-test-only-secret-not-for-deployment-0000',
+      RP_ID: 'localhost', RP_NAME: 'Daybook Test', RP_ORIGIN: 'http://localhost:3107' },
   },
 });

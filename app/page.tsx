@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import Link from 'next/link';
-import { Bookmark, Check, ChevronDown, ChevronRight, Circle, CircleCheck, FolderOpen,
+import { Bookmark, CalendarDays, Check, ChevronDown, ChevronRight, Circle, CircleCheck, FolderOpen,
   Layers3, LoaderCircle, Moon, Pencil, Plus, Search, SlidersHorizontal, Sun, Tag as TagIcon, Trash2, X } from 'lucide-react';
 import type { Priority, RecurrencePattern, Subtask, Tag, Template, Todo } from '@/lib/db';
 import { calculateProgress, parseTemplateSubtasks } from '@/lib/progress';
@@ -17,6 +17,14 @@ interface CurrentUser { userId: number; username: string; demo: boolean }
 interface Confirmation { title: string; text: string; action: () => Promise<void> }
 interface DraftSettings { dueDate: string; offset: string; recurrence: '' | RecurrencePattern; reminder: string; subtasks: string[] }
 const emptyDraft: DraftSettings = { dueDate: '', offset: '', recurrence: '', reminder: '', subtasks: [] };
+
+function localDateTimeToIso(value: string): string | null {
+  return value ? singaporeInstant(value).toISOString() : null;
+}
+
+function isoToLocalDateTime(value: string | null): string {
+  return value ? formatSingaporeDate(value, "yyyy-MM-dd'T'HH:mm") : '';
+}
 
 async function api<T>(url: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(url, {
@@ -175,6 +183,13 @@ export default function Home() {
   const [tagColor, setTagColor] = useState('#3B82F6');
   const [editingTag, setEditingTag] = useState<number | null>(null);
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
+  const [editingDetails, setEditingDetails] = useState<Todo | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editPriority, setEditPriority] = useState<Priority>('medium');
+  const [editDueLocal, setEditDueLocal] = useState('');
+  const [editRecurring, setEditRecurring] = useState(false);
+  const [editRecurrence, setEditRecurrence] = useState<RecurrencePattern>('weekly');
+  const [editReminder, setEditReminder] = useState<number | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newPriority, setNewPriority] = useState<Priority>('medium');
   const [newTags, setNewTags] = useState<number[]>([]);
@@ -268,14 +283,97 @@ export default function Home() {
 
   async function submitTodo(event: FormEvent) {
     event.preventDefault();
+    if (pendingAction.current) return;
+    const due = !draftSettings.offset && draftSettings.dueDate ? singaporeInstant(draftSettings.dueDate).toISOString() : null;
+    const input = {
+      title: newTitle.trim(), priority: newPriority, tag_ids: newTags,
+      due_date: due, due_date_offset_minutes: draftSettings.offset ? Number(draftSettings.offset) : undefined,
+      is_recurring: Boolean(draftSettings.recurrence), recurrence_pattern: draftSettings.recurrence || null,
+      reminder_minutes: draftSettings.reminder ? Number(draftSettings.reminder) : null,
+      subtasks: draftSettings.subtasks.map((title) => ({ title })),
+    };
+    const optimistic: Todo = {
+      id: -getSingaporeNow().getTime(), user_id: user?.userId ?? 0, title: input.title, completed: false,
+      due_date: input.due_date, priority: input.priority, is_recurring: input.is_recurring,
+      recurrence_pattern: input.recurrence_pattern, reminder_minutes: input.reminder_minutes,
+      last_notification_sent: null, created_at: getSingaporeNow().toISOString(), updated_at: null, tags: [], subtasks: [],
+    };
+    setTodos((current) => [...current, optimistic]);
     await perform(async () => {
-      const due = !draftSettings.offset && draftSettings.dueDate ? singaporeInstant(draftSettings.dueDate).toISOString() : null;
-      await api('/api/todos', 'POST', { title: newTitle, priority: newPriority, tag_ids: newTags, due_date: due,
-        due_date_offset_minutes: draftSettings.offset ? Number(draftSettings.offset) : undefined,
-        is_recurring: Boolean(draftSettings.recurrence), recurrence_pattern: draftSettings.recurrence || null,
-        reminder_minutes: draftSettings.reminder ? Number(draftSettings.reminder) : null,
-        subtasks: draftSettings.subtasks.map((title) => ({ title })) });
-      await refresh(); setNewTitle(''); setNewTags([]); setDraftSettings({ ...emptyDraft });
+      try {
+        await api('/api/todos', 'POST', input);
+        await refresh();
+        setNewTitle(''); setNewTags([]); setDraftSettings({ ...emptyDraft });
+      } catch (failure) {
+        setTodos((current) => current.filter((todo) => todo.id !== optimistic.id));
+        throw failure;
+      }
+    });
+  }
+
+  function beginTodoEdit(todo: Todo) {
+    setEditingDetails(todo);
+    setEditTitle(todo.title);
+    setEditPriority(todo.priority);
+    setEditDueLocal(isoToLocalDateTime(todo.due_date));
+    setEditRecurring(todo.is_recurring);
+    setEditRecurrence(todo.recurrence_pattern ?? 'weekly');
+    setEditReminder(todo.reminder_minutes);
+  }
+
+  async function saveTodoEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!editingDetails || pendingAction.current) return;
+    const original = editingDetails;
+    const input = {
+      title: editTitle.trim(), priority: editPriority,
+      ...(editDueLocal !== isoToLocalDateTime(original.due_date) ? { due_date: localDateTimeToIso(editDueLocal) } : {}),
+      is_recurring: editRecurring, recurrence_pattern: editRecurring ? editRecurrence : null,
+      reminder_minutes: editReminder,
+    };
+    const optimistic = { ...original, ...input };
+    setTodos((current) => current.map((todo) => todo.id === original.id ? optimistic : todo));
+    setEditingDetails(null);
+    await perform(async () => {
+      try {
+        await api(`/api/todos/${original.id}`, 'PUT', input);
+        await refresh();
+      } catch (failure) {
+        setTodos((current) => current.map((todo) => todo.id === original.id ? original : todo));
+        throw failure;
+      }
+    });
+  }
+
+  async function toggleCompletion(todo: Todo) {
+    if (pendingAction.current) return;
+    const optimistic = { ...todo, completed: !todo.completed };
+    setTodos((current) => current.map((item) => item.id === todo.id ? optimistic : item));
+    await perform(async () => {
+      try {
+        await api(`/api/todos/${todo.id}`, 'PUT', { completed: optimistic.completed });
+        await refresh();
+      } catch (failure) {
+        setTodos((current) => current.map((item) => item.id === todo.id ? todo : item));
+        throw failure;
+      }
+    });
+  }
+
+  function confirmTodoDelete(todo: Todo) {
+    setConfirmation({
+      title: 'Delete todo?', text: `"${todo.title}" and its subtasks will be permanently deleted.`,
+      action: async () => {
+        setTodos((current) => current.filter((item) => item.id !== todo.id));
+        try {
+          await api(`/api/todos/${todo.id}`, 'DELETE');
+          await refresh();
+          setConfirmation(null);
+        } catch (failure) {
+          await refresh();
+          throw failure;
+        }
+      },
     });
   }
 
@@ -361,6 +459,7 @@ export default function Home() {
 
       <main>
         <div className="page-heading"><div><p className="eyebrow">PERSONAL WORKSPACE</p><h1>My tasks<span className="heading-dot">.</span></h1></div>
+          <Link className="button secondary" href="/calendar"><CalendarDays size={16} />Calendar</Link>
           <button className="button secondary" disabled={!user} onClick={() => setManageTags(true)}><TagIcon size={16} />Manage tags</button>
         </div>
         {loading ? <div className="empty-state" role="status"><LoaderCircle className="spin" size={28} /><h2>Loading your workspace</h2></div> : !user ?
@@ -371,6 +470,7 @@ export default function Home() {
             <div className="composer-main"><Plus size={21} /><input aria-label="New task title" placeholder="What needs to get done?" value={newTitle} onChange={(event) => setNewTitle(event.target.value)} required />
               <button className="button primary" disabled={busy || !newTitle.trim()}><Plus size={16} /><span>Add task</span></button>
             </div>
+            {newTitle.length > 200 && <p className="field-warning" role="status">Long titles can be harder to scan. This task will still be saved.</p>}
             <div className="composer-options"><label className="compact-select">Priority<select aria-label="New task priority" value={newPriority} onChange={(event) => setNewPriority(event.target.value as Priority)}><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
               <span className="option-divider" />{tags.map((tag) => <TagPill key={tag.id} tag={tag} selected={newTags.includes(tag.id)} onClick={() => setNewTags(newTags.includes(tag.id) ? newTags.filter((id) => id !== tag.id) : [...newTags, tag.id])} />)}
             </div>
@@ -412,16 +512,19 @@ export default function Home() {
           <div className="task-list">{sections.map((section) => section.rows.length > 0 && <section key={section.key} className={`task-section ${section.key}`} aria-label={section.title}>
             <header className="section-heading"><h2><span className="section-dot" />{section.title}<span className="section-count">{section.rows.length}</span></h2><span className="section-rule" /></header>
             {section.rows.map((todo) => <article key={todo.id} className={`task-row ${todo.completed ? 'is-completed' : ''}`} data-testid="task-row">
-              <button className="task-status" aria-label={`${todo.completed ? 'Reopen' : 'Complete'} task ${todo.title}`} title={todo.completed ? 'Reopen task' : 'Complete task'} disabled={busy} onClick={() => void perform(async () => { await api(`/api/todos/${todo.id}`, 'PUT', { completed: !todo.completed }); await refresh(); })}>{todo.completed ? <CircleCheck size={21} /> : <Circle size={21} />}</button>
+              <button className="task-status" aria-label={`${todo.completed ? 'Reopen' : 'Complete'} task ${todo.title}`} title={todo.completed ? 'Reopen task' : 'Complete task'} disabled={busy} onClick={() => void toggleCompletion(todo)}>{todo.completed ? <CircleCheck size={21} /> : <Circle size={21} />}</button>
               <div className="task-content"><h3>{todo.title}</h3>
                 <div className="task-meta"><span className={`priority ${todo.priority}`}><span />{todo.priority}</span>
                   {todo.due_date && <time dateTime={todo.due_date}>{formatSingaporeDate(todo.due_date, 'd MMM, HH:mm')}</time>}
+                  {todo.is_recurring && <span className="recurrence-label">Repeats {todo.recurrence_pattern}</span>}
+                  {todo.reminder_minutes !== null && <span className="reminder-label">Reminder set</span>}
                 </div>
                 <SubtaskList todo={todo} busy={busy} onAction={perform} onChanged={refresh} />
               </div>
               <div className="task-tags">{todo.tags?.map((tag) => <TagPill key={tag.id} tag={tag} selected onClick={() => setFilters({ ...filters, tagId: tag.id })} />)}</div>
+              <button className="icon-button" aria-label={`Edit ${todo.title}`} title="Edit task" disabled={busy} onClick={() => beginTodoEdit(todo)}><Pencil size={16} /></button>
               <button className="icon-button edit-tags" aria-label={`Edit tags for ${todo.title}`} title="Edit task tags" disabled={busy} onClick={() => setEditingTodo(todo)}><TagIcon size={17} /></button>
-              <button className="icon-button danger-text delete-task" aria-label={`Delete task ${todo.title}`} title="Delete task" disabled={busy} onClick={() => void perform(async () => { await api(`/api/todos/${todo.id}`, 'DELETE'); await refresh(); })}><Trash2 size={16} /></button>
+              <button className="icon-button danger-text delete-task" aria-label={`Delete task ${todo.title}`} title="Delete task" disabled={busy} onClick={() => confirmTodoDelete(todo)}><Trash2 size={16} /></button>
             </article>)}
           </section>)}</div>
           {visible.length === 0 && <div className="empty-state"><Search size={30} /><h2>{todos.length ? 'No todos match your filters' : 'You have no todos yet'}</h2>{active && <button className="button secondary" onClick={clearAll}>Clear All</button>}</div>}
@@ -466,6 +569,19 @@ export default function Home() {
         onChange={(event) => { void toggleTodoTag(editingTodo, tag, event.target.checked); }} /><span className="color-dot" style={{ backgroundColor: tag.color }} /><span className="truncate">{tag.name}</span></label>)}
       {tags.length === 0 && <p className="muted">No tags yet.</p>}
     </div><div className="modal-actions"><button className="button secondary" onClick={() => setEditingTodo(null)}>Done</button></div></Modal>}
+
+    {editingDetails && <Modal title="Edit task" onClose={() => setEditingDetails(null)}>
+      {errorBanner}
+      <form className="todo-edit-form" onSubmit={(event) => void saveTodoEdit(event)}>
+        <label>Task title<input aria-label="Edit todo title" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} required /></label>
+        <label>Priority<select aria-label="Edit todo priority" value={editPriority} onChange={(event) => setEditPriority(event.target.value as Priority)}><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+        <label>Due date · Singapore time<input aria-label="Edit todo due date" type="datetime-local" value={editDueLocal} onChange={(event) => setEditDueLocal(event.target.value)} /></label>
+        <label className="todo-toggle"><input type="checkbox" checked={editRecurring} onChange={(event) => setEditRecurring(event.target.checked)} />Repeat</label>
+        {editRecurring && <label>Pattern<select aria-label="Edit todo recurrence pattern" value={editRecurrence} onChange={(event) => setEditRecurrence(event.target.value as RecurrencePattern)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>}
+        <label>Reminder<select aria-label="Edit todo reminder" disabled={!editDueLocal} value={editReminder ?? ''} onChange={(event) => setEditReminder(event.target.value ? Number(event.target.value) : null)}><option value="">None</option><option value="5">5 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option><option value="1440">1 day</option><option value="10080">1 week</option><option value="43200">1 month</option></select></label>
+        <div className="modal-actions"><button className="button secondary" type="button" disabled={busy} onClick={() => setEditingDetails(null)}>Cancel</button><button className="button primary" disabled={busy || !editTitle.trim()}><Check size={16} />Save changes</button></div>
+      </form>
+    </Modal>}
 
     {savingPreset && user && <Modal title="Save filter" onClose={() => setSavingPreset(false)}>{errorBanner}<p className="filter-preview">{filterSummary(filters, tags)}</p><form onSubmit={(event) => { event.preventDefault(); void perform(async () => { setPresets(savePreset(user.userId, { id: crypto.randomUUID(), name: presetName.trim(), filters: { ...filters }, createdAt: getSingaporeNow().toISOString() })); setSavingPreset(false); setAdvanced(true); }); }}>
       <label>View name<input aria-label="View name" value={presetName} onChange={(event) => setPresetName(event.target.value)} required /></label><div className="modal-actions"><button className="button primary" disabled={busy || !presetName.trim()}><Bookmark size={16} />Save</button></div>

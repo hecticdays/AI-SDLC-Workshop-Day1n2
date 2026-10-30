@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { createStore, DataError, todoInputSchema, templateInputSchema, parseTemplateSubtasks,
-  getDatabase, getStore, subtaskDB, templateDB, todoDB, tagDB } from '../lib/db';
+  getDatabase, getStore, subtaskDB, templateDB, todoDB, tagDB,
+  findTodo, updateTodo, deleteTodo, findHolidays, upsertHoliday } from '../lib/db';
+import type { TodoCreate, TodoUpdate } from '../lib/db';
 import { calculateProgress } from '../lib/progress';
 import { getSingaporeNow } from '../lib/timezone';
 
@@ -188,5 +190,130 @@ test('relative one-minute deadlines are resolved on the server without a network
     assert.ok(Date.parse(todo.due_date!) <= getSingaporeNow().getTime() + 60_000);
     assert.throws(() => todos.create(1, { title: 'Conflicting date', due_date_offset_minutes: 1,
       due_date: '2030-01-01T00:00:00Z' } as never));
+  } finally { database.close(); }
+});
+
+test('recurring completion clamps Singapore dates, copies metadata and creates exactly one independent checklist', () => {
+  const { database, todos, tags, subtasks } = fixture();
+  try {
+    const tag = tags.create(1, { name: 'Recurring' });
+    const parent = todos.create(1, { title: 'Review', due_date_offset_minutes: 10, priority: 'high',
+      is_recurring: true, recurrence_pattern: 'monthly', reminder_minutes: 30,
+      tag_ids: [tag.id], subtasks: [{ title: 'First', position: 2 }] });
+    subtasks.update(parent.subtasks![0].id, 1, { completed: true });
+    database.prepare('UPDATE todos SET due_date = ? WHERE id = ?').run('2028-01-30T16:30:00.000Z', parent.id);
+    todos.update(parent.id, 1, { completed: true });
+    const successor = todos.findAllByUser(1).find((todo) => todo.id !== parent.id)!;
+    assert.equal(successor.due_date, '2028-02-28T16:30:00.000Z');
+    assert.equal(successor.priority, 'high');
+    assert.equal(successor.recurrence_pattern, 'monthly');
+    assert.equal(successor.reminder_minutes, 30);
+    assert.equal(successor.completed, false);
+    assert.equal(successor.last_notification_sent, null);
+    assert.deepEqual(successor.tags, [tag]);
+    assert.equal(successor.subtasks?.[0].title, 'First');
+    assert.equal(successor.subtasks?.[0].position, 2);
+    assert.equal(successor.subtasks?.[0].completed, false);
+    assert.notEqual(successor.subtasks?.[0].id, parent.subtasks![0].id);
+    todos.update(parent.id, 1, { completed: true });
+    todos.update(parent.id, 1, { completed: false });
+    createStore(database).todos.update(parent.id, 1, { completed: true });
+    assert.equal(todos.findAllByUser(1).length, 2);
+    assert.equal(subtasks.findByTodoId(parent.id, 1)[0].completed, true);
+    todos.delete(successor.id, 1);
+    todos.update(parent.id, 1, { completed: false });
+    todos.update(parent.id, 1, { completed: true });
+    assert.equal(todos.findAllByUser(1).length, 1);
+  } finally { database.close(); }
+});
+
+test('overdue recurring successors bypass new-create deadlines for every recurrence pattern', () => {
+  const { database, todos } = fixture();
+  try {
+    for (const [pattern, due, expected] of [
+      ['daily', '2020-12-31T16:15:00.000Z', '2021-01-01T16:15:00.000Z'],
+      ['weekly', '2020-12-31T16:15:00.000Z', '2021-01-07T16:15:00.000Z'],
+      ['monthly', '2021-01-30T16:15:00.000Z', '2021-02-27T16:15:00.000Z'],
+      ['yearly', '2020-02-28T16:15:00.000Z', '2021-02-27T16:15:00.000Z'],
+    ] as const) {
+      const parent = todos.create(1, { title: pattern, due_date_offset_minutes: 10,
+        is_recurring: true, recurrence_pattern: pattern });
+      database.prepare('UPDATE todos SET due_date = ? WHERE id = ?').run(due, parent.id);
+      todos.update(parent.id, 1, { completed: true });
+      const successor = todos.findAllByUser(1).find((todo) => todo.title === pattern && !todo.completed)!;
+      assert.equal(successor.due_date, expected);
+    }
+  } finally { database.close(); }
+});
+
+test('recurrence parent, successor, tags and checklist roll back together on failure', () => {
+  const { database, todos, tags } = fixture();
+  try {
+    const tag = tags.create(1, { name: 'Atomic recurrence' });
+    const parent = todos.create(1, { title: 'Atomic', due_date_offset_minutes: 10,
+      is_recurring: true, recurrence_pattern: 'daily', tag_ids: [tag.id], subtasks: [{ title: 'Child' }] });
+    database.exec("CREATE TRIGGER reject_successor_child BEFORE INSERT ON subtasks BEGIN SELECT RAISE(ABORT, 'child failure'); END");
+    assert.throws(() => todos.update(parent.id, 1, { completed: true, title: 'Changed' }));
+    assert.deepEqual(todos.findById(parent.id, 1), parent);
+    assert.equal(todos.findAllByUser(1).length, 1);
+    database.exec('DROP TRIGGER reject_successor_child');
+    todos.update(parent.id, 1, { completed: true });
+    assert.equal(todos.findAllByUser(1).length, 2);
+  } finally { database.close(); }
+});
+
+test('remote todo adapters keep user-first signatures and missing-row semantics; holidays upsert and bound ranges', () => {
+  const previous = process.env.DATABASE_PATH;
+  process.env.DATABASE_PATH = ':memory:';
+  try {
+    const database = getDatabase();
+    database.prepare("INSERT INTO users(id, username) VALUES (31, 'compat-owner'), (32, 'compat-other')").run();
+    const todo = todoDB.create(31, { title: 'Compatibility' });
+    assert.equal(findTodo(31, todo.id)?.id, todo.id);
+    assert.equal(findTodo(32, todo.id), undefined);
+    assert.equal(updateTodo(32, todo.id, { completed: true }), undefined);
+    assert.equal(deleteTodo(32, todo.id), false);
+    missing(() => todoDB.update(todo.id, 32, { completed: true }));
+    assert.equal(updateTodo(31, todo.id, { title: 'Renamed' })?.title, 'Renamed');
+    assert.equal(deleteTodo(31, todo.id), true);
+    assert.equal(deleteTodo(31, todo.id), false);
+    assert.equal(updateTodo(31, todo.id, { completed: true }), undefined);
+    upsertHoliday('2030-01-02', 'Second');
+    upsertHoliday('2030-01-01', 'First');
+    const original = findHolidays('2030-01-01', '2030-01-02')[0];
+    upsertHoliday('2030-01-01', 'Renamed');
+    assert.deepEqual(findHolidays('2030-01-01', '2030-01-02'), [{ ...original, name: 'Renamed' }]);
+    assert.deepEqual(findHolidays('2030-01-02').map((holiday) => holiday.date), ['2030-01-02']);
+    assert.deepEqual(findHolidays(undefined, '2030-01-02').map((holiday) => holiday.date), ['2030-01-01']);
+    assert.equal(findHolidays().length, 2);
+    database.prepare('DELETE FROM users WHERE id IN (31, 32)').run();
+    database.prepare("DELETE FROM holidays WHERE date LIKE '2030-%'").run();
+  } finally {
+    if (previous === undefined) delete process.env.DATABASE_PATH;
+    else process.env.DATABASE_PATH = previous;
+  }
+});
+
+test('client DTOs accept optional defaults and numeric reminders without weakening native validation', () => {
+  const reminder: number = Number('30');
+  const input: TodoCreate = { title: 'Client payload', due_date_offset_minutes: 10, reminder_minutes: reminder };
+  const patch: TodoUpdate = { reminder_minutes: reminder };
+  assert.equal(todoInputSchema.parse(input).reminder_minutes, 30);
+  assert.equal(patch.reminder_minutes, 30);
+  assert.equal(todoInputSchema.safeParse({ ...input, reminder_minutes: 7 }).success, false);
+});
+
+test('store initialization safely migrates legacy users and preserves existing data on repeated initialization', () => {
+  const database = new Database(':memory:');
+  try {
+    database.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE);
+      INSERT INTO users(id, username) VALUES (1, 'legacy');`);
+    const store = createStore(database);
+    assert.deepEqual(database.prepare('SELECT * FROM users').get(), { id: 1, username: 'legacy', display_name: '' });
+    const todo = store.todos.create(1, { title: 'Legacy task' });
+    const tag = store.tags.create(1, { name: 'Legacy tag' });
+    store.tags.attachToTodo(todo.id, tag.id, 1);
+    assert.deepEqual(createStore(database).todos.findById(todo.id, 1)?.tags, [tag]);
+    assert.equal(store.todos.findAllByUser(1).length, 1);
   } finally { database.close(); }
 });
