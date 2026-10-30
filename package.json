@@ -1,0 +1,48 @@
+{
+  "name": "todo-app-person1-features",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "predev": "npm run seed:holidays",
+    "dev": "next dev",
+    "build": "next build",
+    "prestart": "npm run seed:holidays",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "seed:holidays": "tsx scripts/seed-holidays.ts"
+  },
+  "dependencies": {
+    "@simplewebauthn/browser": "^13.1.1",
+    "@simplewebauthn/server": "^13.1.1",
+    "better-sqlite3": "^12.2.0",
+    "date-holidays": "^3.26.5",
+    "jose": "^6.1.0",
+    "lucide-react": "^0.468.0",
+    "next": "^15.5.6",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.7",
+    "eslint": "^9.29.0",
+    "eslint-config-next": "^15.5.6",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "deepmerge": "3.3.0",
+    "postcss": "^8.5.32"
+  },
+  "allowScripts": {
+    "better-sqlite3": true
+  }
+}
