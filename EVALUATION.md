@@ -2,6 +2,18 @@
 
 This document provides a comprehensive checklist for evaluating the completeness of the Todo App implementation, including all core features, testing, and deployment to cloud platforms.
 
+## Person 4: Implementation Verification
+
+**Verified:** 2026-10-30. **Scope:** PRPs 06 (tags) and 08 (search/filtering). The Person 4 acceptance flows pass in the current implementation: 13 unit tests and 32 desktop/mobile Playwright cases. This does not mark other owners' application features or production deployment complete.
+
+- **Search contract resolved:** PRP 08 explicitly excludes tag-name text search. Search covers todo/subtask titles; tags have their own composable filter. Feature 08 below now follows that contract instead of the older conflicting tag-name search checklist.
+- **Contrast contract resolved:** Custom tag colors use black or white text for AA contrast. Always-white text cannot meet AA on arbitrary pale colors. Browser tests check representative colors in both themes.
+- **Edit integration delivered:** `tagDB.replaceForTodo(todoId, tagIds, userId)` atomically validates ownership and replaces associations, deduplicates IDs, supports an empty selection, and participates in the caller's transaction. Person 1 can call it from the full todo-update handler; editing task tags already works independently in the current UI.
+- **Import integration delivered:** `tagDB.findByName(name, userId)` and `findOrCreateByName(userId, input)` use trimmed names and SQLite NOCASE matching. Resolution returns `{ tag, created }`, preserves an existing tag's color, and rolls back with an outer import transaction. This is the tag contract for Person 5, not a claim that import itself exists.
+- **Subtask/template integration delivered:** After a successful mutation, dispatch `window.dispatchEvent(new Event('todo-app:todos-changed'))` from client code. The workspace refetches nested todos and reapplies filters; tests cover renamed/deleted checklist items and newly created checklist-bearing tasks without implementing Person 3's endpoints.
+- **Performance evidence:** All-filter recomputation over 1000 todos passes the under-100ms unit gate; warmed tag CRUD requests pass the under-300ms average gate. Cold Next.js compilation is excluded from that steady-state API metric.
+- **Review outcome:** User flows, validation, ownership, failure recovery, empty/deleted-tag states, storage errors, accessibility, and cross-owner contracts are reviewed and covered. No standalone Person 4 implementation task remains; consuming these contracts in the other owners' features remains their integration work.
+
 ## Person 3: PRP Review
 
 **Reviewed:** 2026-10-30. **Scope:** [PRP 05 - Subtasks & Progress Tracking](PRPs/05-subtasks-progress.md) and [PRP 07 - Template System](PRPs/07-template-system.md), as assigned in [ASSIGNMENTS.md](ASSIGNMENTS.md).
@@ -291,39 +303,41 @@ These are recorded handoffs, not completed decisions or notifications to other t
 ---
 
 ### ✅ Feature 06: Tag System
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** Verified (Person 4, 2026-10-30)
 
 **Implementation Checklist:**
-- [ ] Database: `tags` and `todo_tags` tables
-- [ ] API endpoint: `GET /api/tags`
-- [ ] API endpoint: `POST /api/tags`
-- [ ] API endpoint: `PUT /api/tags/[id]`
-- [ ] API endpoint: `DELETE /api/tags/[id]`
-- [ ] API endpoint: `POST /api/todos/[id]/tags`
-- [ ] API endpoint: `DELETE /api/todos/[id]/tags`
-- [ ] "Manage Tags" modal
-- [ ] Tag creation form (name + color picker)
-- [ ] Tag list with edit/delete buttons
-- [ ] Tag selection in todo form (checkboxes)
-- [ ] Tag badges on todos (colored)
-- [ ] Click badge to filter by tag
-- [ ] Tag filter indicator with clear button
+- [x] Database: `tags` and `todo_tags` tables
+- [x] API endpoint: `GET /api/tags`
+- [x] API endpoint: `POST /api/tags`
+- [x] API endpoint: `PUT /api/tags/[id]`
+- [x] API endpoint: `DELETE /api/tags/[id]`
+- [x] API endpoint: `POST /api/todos/[id]/tags`
+- [x] API endpoint: `DELETE /api/todos/[id]/tags`
+- [x] "Manage Tags" modal
+- [x] Tag creation form (name + color picker)
+- [x] Tag list with edit/delete buttons
+- [x] Tag selection: multi-select pills on create, checkboxes when editing task tags
+- [x] Tag badges on todos (colored)
+- [x] Click badge to filter by tag
+- [x] Tag filter indicator with clear button
 
 **Testing:**
-- [ ] E2E test: Create tag
-- [ ] E2E test: Edit tag name/color
-- [ ] E2E test: Delete tag
-- [ ] E2E test: Assign multiple tags to todo
-- [ ] E2E test: Filter by tag
-- [ ] E2E test: Duplicate tag name validation
-- [ ] Unit test: Tag name validation
+- [x] E2E test: Create tag
+- [x] E2E test: Edit tag name/color, including partial updates
+- [x] E2E test: Delete tag
+- [x] E2E test: Assign multiple tags to todo
+- [x] E2E test: Filter by tag
+- [x] E2E test: Duplicate tag name validation
+- [x] Unit test: Tag name validation
+- [x] Unit tests: atomic replacement, import name resolution, ownership, outer rollback and 60-task cascade
+- [x] E2E tests: 401/404 checks, failed-assignment rollback/retry, focus restoration, contrast and warm API latency
 
 **Acceptance Criteria:**
-- [ ] Tags unique per user
-- [ ] Custom colors work
-- [ ] Editing tag updates all todos
-- [ ] Deleting tag removes from todos
-- [ ] Filter works correctly
+- [x] Tags unique per user
+- [x] Custom colors work
+- [x] Editing tag updates all todos
+- [x] Deleting tag removes from todos
+- [x] Filter works correctly
 
 ---
 
@@ -365,37 +379,40 @@ These are recorded handoffs, not completed decisions or notifications to other t
 ---
 
 ### ✅ Feature 08: Search & Filtering
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** Verified (Person 4, 2026-10-30; PRP 08 search scope)
 
 **Implementation Checklist:**
-- [ ] Search input field at top of page
-- [ ] Real-time filtering (no submit button)
-- [ ] Case-insensitive search
-- [ ] Search matches todo titles
-- [ ] Search matches tag names (advanced mode)
-- [ ] Priority filter dropdown
-- [ ] Tag filter (click badge)
-- [ ] Combined filters (AND logic)
-- [ ] Filter summary/indicator
-- [ ] Clear all filters button
-- [ ] Empty state for no results
-- [ ] Debounced search (300ms)
+- [x] Search input field at top of page
+- [x] Real-time filtering (no submit button)
+- [x] Case-insensitive search
+- [x] Search matches todo titles
+- [x] Search matches subtask titles (tag names are filtered separately, per PRP 08)
+- [x] Priority filter dropdown
+- [x] Tag filter (dropdown or click badge)
+- [x] Combined filters (AND logic)
+- [x] Filter summary/indicator
+- [x] Clear all filters button and independent tag-filter clearing
+- [x] Empty state for no results
+- [x] Debounced search (300ms), cached computation and immediate clear
+- [x] Advanced completion/date filters, saved preset preview/apply/delete and account-scoped browser persistence
 
 **Testing:**
-- [ ] E2E test: Search by title
-- [ ] E2E test: Search by tag name
-- [ ] E2E test: Filter by priority
-- [ ] E2E test: Filter by tag
-- [ ] E2E test: Combine multiple filters
-- [ ] E2E test: Clear filters
-- [ ] Performance test: Filter 1000 todos < 100ms
+- [x] E2E test: Search by title
+- [x] E2E test: Search by subtask title
+- [x] E2E test: Filter by priority
+- [x] E2E test: Filter by tag
+- [x] E2E test: Combine multiple filters
+- [x] E2E test: Clear filters
+- [x] Performance test: Filter 1000 todos < 100ms
+- [x] E2E tests: deterministic debounce, Singapore dates, section counts, presets, deleted tags, storage failures and empty accounts
+- [x] E2E test: checklist changes become searchable through the shared refresh event
 
 **Acceptance Criteria:**
-- [ ] Search is case-insensitive
-- [ ] Includes tag names in search
-- [ ] Filters combine with AND
-- [ ] Real-time updates
-- [ ] Clear message for empty results
+- [x] Search is case-insensitive
+- [x] Includes subtask titles in search; supports tag filtering separately
+- [x] Filters combine with AND
+- [x] Real-time updates
+- [x] Clear message for empty results
 
 ---
 

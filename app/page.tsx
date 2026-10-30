@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Bookmark, Check, CheckCheck, ChevronDown, ChevronRight, Circle, CircleCheck, FolderOpen,
   Layers3, LoaderCircle, Moon, Pencil, Plus, Search, SlidersHorizontal, Sun, Tag as TagIcon, Trash2, X } from 'lucide-react';
@@ -137,8 +137,13 @@ export default function Home() {
     const update = () => { void refresh().catch((failure: Error) => setError(failure.message)); };
     const storage = () => setPresets(loadPresets(user.userId));
     window.addEventListener('focus', update);
+    window.addEventListener('todo-app:todos-changed', update);
     window.addEventListener('storage', storage);
-    return () => { window.removeEventListener('focus', update); window.removeEventListener('storage', storage); };
+    return () => {
+      window.removeEventListener('focus', update);
+      window.removeEventListener('todo-app:todos-changed', update);
+      window.removeEventListener('storage', storage);
+    };
   }, [user]);
 
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
@@ -189,9 +194,11 @@ export default function Home() {
   }
 
   const active = hasActiveFilters(filters);
-  const visible = applyFilters(todos, {
-    ...filters, search: immediateSearch ?? (filters.search.trim() ? debouncedSearch : ''),
-  });
+  const search = immediateSearch ?? (filters.search.trim() ? debouncedSearch : '');
+  const { priority, tagId, completion, dueDateFrom, dueDateTo } = filters;
+  const visible = useMemo(() => applyFilters(todos, {
+    search, priority, tagId, completion, dueDateFrom, dueDateTo,
+  }), [todos, search, priority, tagId, completion, dueDateFrom, dueDateTo]);
   const sections = [
     { title: 'Overdue', key: 'overdue', rows: visible.filter((todo) => !todo.completed && todo.due_date && now && singaporeInstant(todo.due_date).getTime() < now.getTime()) },
     { title: 'Pending', key: 'pending', rows: visible.filter((todo) => !todo.completed && (!todo.due_date || !now || singaporeInstant(todo.due_date).getTime() >= now.getTime())) },
@@ -268,6 +275,9 @@ export default function Home() {
             <div className="results-bar"><span aria-live="polite">{visible.length} {visible.length === 1 ? 'task' : 'tasks'}{active ? ` of ${todos.length}` : ''}</span>
               {active && <div className="filter-actions"><button className="text-button danger-text" onClick={clearAll}><X size={14} />Clear All</button><button className="text-button" onClick={() => { setPresetName(''); setSavingPreset(true); }}><Bookmark size={14} />Save Filter</button></div>}
             </div>
+            {active && <div className="active-filter-summary"><p role="status" aria-label="Active filters">{filterSummary(filters, tags)}</p>
+              {filters.tagId !== 'all' && <button className="icon-button" aria-label="Clear tag filter" title="Clear tag filter" onClick={() => setFilters({ ...filters, tagId: 'all' })}><X size={15} /></button>}
+            </div>}
           </section>
 
           <div className="task-list">{sections.map((section) => section.rows.length > 0 && <section key={section.key} className={`task-section ${section.key}`} aria-label={section.title}>

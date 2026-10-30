@@ -20,13 +20,15 @@ Open the URL printed by Next.js (normally http://127.0.0.1:3000). Demo mode bind
 - Title/subtask search with a 300ms debounce and immediate clear; priority/tag/completion filters and inclusive Singapore-date bounds combined with AND.
 - Saved filter preview, apply/delete, corrupted-storage handling, storage-error feedback, and per-account browser storage keys.
 - Filtered section counts, distinct empty states, deleted-tag fallback, keyboard-accessible native dialogs, responsive layout, and light/dark themes.
+- Visible active-filter summary, independent tag-filter clearing, cached debounced filtering, partial-update preservation, and transactional edit/import tag helpers.
 
 Tag uniqueness uses trimmed names and SQLite `NOCASE` (ASCII case folding); non-ASCII case variants are not normalized. Coordinate this contract with Person 5's importer. Tag text switches between black and white for WCAG AA contrast rather than forcing white text on pale custom colors. Presets remain browser-local but are additionally account-scoped so shared-browser accounts do not share saved views.
 
 ### Integration Handoff
 
-- **Person 1:** `lib/db.ts` supplies baseline users/todos/subtasks tables and `todoDB.findAllByUser`/`create`, plus `GET`/`POST /api/todos`, solely to exercise Person 4's features. Creation currently accepts title, priority, and tag IDs; full CRUD, due-date editing, recurrence, calendar, and other features remain your integration work. The main UI stays in `app/page.tsx` per repository convention.
-- **Person 3:** Nested subtasks are read for search/progress display; subtask CRUD is not implemented here.
+- **Person 1:** `lib/db.ts` supplies baseline users/todos/subtasks tables and `todoDB.findAllByUser`/`create`, plus `GET`/`POST /api/todos`, solely to exercise Person 4's features. Use `tagDB.replaceForTodo(todoId, tagIds, userId)` inside your edit transaction for ownership-checked, atomic tag replacement (duplicate IDs are collapsed; an empty selection clears tags). Existing-task tags can already be edited independently in the current UI. Full CRUD, due-date editing, recurrence, calendar, and other features remain your integration work. The main UI stays in `app/page.tsx` per repository convention.
+- **Person 3:** Nested subtasks are read for search/progress display; subtask CRUD is not implemented here. After successful checklist edits or template use, dispatch `window.dispatchEvent(new Event('todo-app:todos-changed'))` from client code so search refreshes immediately. Renames, deletions and new checklist-bearing tasks are covered by integration-contract tests.
+- **Person 5 (import):** Use `tagDB.findByName(name, userId)` or `tagDB.findOrCreateByName(userId, input)` to reuse the same trimmed/NOCASE name contract. Resolution returns `{ tag, created }`; existing colors win, user ownership is retained, and new tags roll back with an outer transaction. Use `replaceForTodo` to deduplicate resolved associations. Import endpoints and their payload validation remain your work.
 - **Person 5:** Replace/integrate `lib/auth.ts` with the passkey flow. It currently verifies an HS256 JWT in the `session` cookie, fails closed without a valid session, checks that the user exists, and exports `createSession`/`getSession`/`deleteSession`. Set a private `JWT_SECRET` of at least 32 bytes. `GET /api/auth/me` exposes the session; no passkey login/enrollment endpoints or page-redirect protection are claimed by this build.
 - **Deployment:** `npm run dev` uses normal authentication, not the demo. Set `DATABASE_PATH` for persistent SQLite storage and `APP_ORIGIN` to your public origin behind a reverse proxy; otherwise write-request origin checks use the incoming Host header and request scheme. Never deploy with the test-only JWT secret in the Playwright configuration. This branch is not yet a complete production-ready Todo App.
 - **Existing databases:** The baseline creates missing tables, not a full migration system. A pre-existing case-sensitive tags table needs a coordinated migration and duplicate-name resolution before adopting the case-insensitive contract.
@@ -43,6 +45,8 @@ npm run test:e2e
 ```
 
 Unit tests cover filters, Singapore boundaries, preset validation/storage, tag isolation, idempotency, cascade deletion, transactional rollback, and the demo guard. Playwright runs the tag and search workflows on desktop and mobile, including signed test sessions, unauthorized/cross-user API checks, and light/dark screenshots. It uses `.person4-e2e.db` and a test-only signing secret, independent of `todos.db` and `demo.db`. Screenshots/traces are written under `test-results/` (gitignored). Authentication fixtures do not depend on test-file execution order or a not-yet-built passkey UI.
+
+**Person 4 completion:** Verified on 2026-10-30 with 13 unit tests and 32 desktop/mobile browser cases. This includes failed-save rollback/retry, modal focus, AA tag-text contrast, deleted-tag presets, storage-full errors, exact debounce timing, immediate cross-feature refresh, 60-task cascade integrity, all-filter performance under 100ms for 1000 todos, and average warm tag CRUD latency under 300ms. `EVALUATION.md` and the assigned PRPs record the completed acceptance criteria. Search intentionally covers todo/subtask titles, not tag names, resolving the older evaluation checklist in favor of PRP 08.
 
 ---
 

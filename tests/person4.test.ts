@@ -22,6 +22,7 @@ test('search matches titles and subtasks, ignores case and whitespace', () => {
   }
   assert.equal(applyFilters(rows, { ...DEFAULT_FILTER_STATE, search: '   ' }).length, 2);
   assert.equal(applyFilters(rows, { ...DEFAULT_FILTER_STATE, search: 'missing' }).length, 0);
+  assert.equal(applyFilters(rows, { ...DEFAULT_FILTER_STATE, search: 'Work' }).length, 0);
 });
 
 test('each dimension filters independently and combines with AND without changing order', () => {
@@ -33,6 +34,10 @@ test('each dimension filters independently and combines with AND without changin
   assert.equal(applyFilters(rows, combined).length, 1);
   assert.equal(applyFilters(rows, { ...combined, priority: 'low' }).length, 0);
   assert.deepEqual(applyFilters(rows, DEFAULT_FILTER_STATE), rows);
+  const withMedium = [...rows, { ...todo, id: 3, priority: 'medium' as const }];
+  for (const [priority, id] of [['high', 1], ['low', 2], ['medium', 3]] as const) {
+    assert.deepEqual(applyFilters(withMedium, { ...DEFAULT_FILTER_STATE, priority }).map((row) => row.id), [id]);
+  }
 });
 
 test('date bounds use Singapore dates, support either bound, and exclude undated todos', () => {
@@ -70,7 +75,8 @@ test('presets round-trip per account; malformed data and storage failures are ha
 test('filtering 1000 todos stays within 100ms', () => {
   const many = Array.from({ length: 1000 }, (_, index) => ({ ...todo, id: index }));
   const start = performance.now();
-  assert.equal(applyFilters(many, { ...DEFAULT_FILTER_STATE, search: 'meeting', dueDateFrom: '2026-10-31' }).length, 1000);
+  assert.equal(applyFilters(many, { ...DEFAULT_FILTER_STATE, search: 'meeting', priority: 'high', tagId: 1,
+    completion: 'incomplete', dueDateFrom: '2026-10-31', dueDateTo: '2026-10-31' }).length, 1000);
   assert.ok(performance.now() - start < 100);
 });
 
@@ -79,6 +85,89 @@ test('tag validation rejects wrong types, blank names and invalid colors', () =>
     assert.equal(tagInputSchema.safeParse(input).success, false);
   }
   assert.deepEqual(tagInputSchema.parse({ name: ' Work ' }), { name: 'Work', color: '#3B82F6' });
+});
+
+test('partial tag updates preserve omitted fields and reject empty updates', () => {
+  const database = new Database(':memory:');
+  try {
+    const store = createStore(database);
+    database.prepare('INSERT INTO users(id, username) VALUES (1, ?)').run('Alice');
+    const tag = store.tags.create(1, { name: 'Work', color: '#123456' });
+    assert.equal(store.tags.update(tag.id, 1, { name: 'Office' }).color, '#123456');
+    assert.equal(store.tags.update(tag.id, 1, { color: '#ABCDEF' }).name, 'Office');
+    assert.throws(() => store.tags.update(tag.id, 1, {}));
+    assert.equal(store.tags.findById(tag.id, 1)?.color, '#ABCDEF');
+  } finally {
+    database.close();
+  }
+});
+
+test('tag resolution reuses a user-owned normalized name and existing color inside import transactions', () => {
+  const database = new Database(':memory:');
+  try {
+    const store = createStore(database);
+    database.prepare('INSERT INTO users(id, username) VALUES (1, ?), (2, ?)').run('Alice', 'Bob');
+    const existing = store.tags.create(1, { name: 'Work', color: '#123456' });
+    const reused = store.tags.findOrCreateByName(1, { name: ' work ', color: '#FFFFFF' });
+    assert.deepEqual(reused, { tag: existing, created: false });
+    const fresh = store.tags.findOrCreateByName(2, { name: 'WORK', color: '#000000' });
+    assert.equal(fresh.created, true);
+    assert.notEqual(fresh.tag.id, existing.id);
+    assert.equal(store.tags.findByName(' work ', 2)?.id, fresh.tag.id);
+    assert.throws(() => database.transaction(() => {
+      store.tags.findOrCreateByName(1, { name: 'Rollback' });
+      throw new Error('Abort import');
+    })(), /Abort import/);
+    assert.equal(store.tags.findByName('Rollback', 1), undefined);
+    assert.equal(store.tags.findAllByUser(1).length, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('replacing task tags is atomic, idempotent, ownership-checked and participates in outer transactions', () => {
+  const database = new Database(':memory:');
+  try {
+    const store = createStore(database);
+    database.prepare('INSERT INTO users(id, username) VALUES (1, ?), (2, ?)').run('Alice', 'Bob');
+    const work = store.tags.create(1, { name: 'Work' });
+    const home = store.tags.create(1, { name: 'Home' });
+    const foreign = store.tags.create(2, { name: 'Private' });
+    const todo = store.todos.create(1, { title: 'Edit me', tag_ids: [work.id] });
+    const other = store.todos.create(2, { title: 'Not yours', tag_ids: [foreign.id] });
+    assert.equal(store.tags.replaceForTodo(todo.id, [home.id, home.id], 1).length, 1);
+    assert.equal(store.tags.replaceForTodo(todo.id, [home.id], 1)[0].id, home.id);
+    assert.throws(() => store.tags.replaceForTodo(todo.id, [work.id, foreign.id], 1), /not found/);
+    assert.deepEqual(store.tags.findByTodoId(todo.id, 1).map((tag) => tag.id), [home.id]);
+    assert.throws(() => store.tags.replaceForTodo(other.id, [], 1), /not found/);
+    assert.throws(() => database.transaction(() => {
+      store.tags.replaceForTodo(todo.id, [work.id], 1);
+      throw new Error('Abort edit');
+    })(), /Abort edit/);
+    assert.equal(store.tags.findByTodoId(todo.id, 1)[0].id, home.id);
+    assert.deepEqual(store.tags.replaceForTodo(todo.id, [], 1), []);
+    assert.equal(store.tags.findByTodoId(other.id, 2)[0].id, foreign.id);
+  } finally {
+    database.close();
+  }
+});
+
+test('deleting a heavily used tag cascades without removing tasks or unrelated tags', () => {
+  const database = new Database(':memory:');
+  try {
+    const store = createStore(database);
+    database.prepare('INSERT INTO users(id, username) VALUES (1, ?)').run('Alice');
+    const shared = store.tags.create(1, { name: 'Shared' });
+    const retained = store.tags.create(1, { name: 'Retained' });
+    for (let index = 0; index < 60; index++) store.todos.create(1, { title: `Task ${index}`, tag_ids: [shared.id, retained.id] });
+    store.tags.delete(shared.id, 1);
+    const tasks = store.todos.findAllByUser(1);
+    assert.equal(tasks.length, 60);
+    assert.ok(tasks.every((task) => task.tags?.length === 1 && task.tags[0].id === retained.id));
+    assert.deepEqual(database.pragma('foreign_key_check'), []);
+  } finally {
+    database.close();
+  }
 });
 
 test('demo access is opt-in, development-only, and restricted to the demo database', () => {

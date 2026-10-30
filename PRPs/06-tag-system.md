@@ -1,5 +1,7 @@
 # Tag System
 
+**Person 4 status:** Implemented and verified on 2026-10-30. See the Person 4 verification record in [EVALUATION.md](../EVALUATION.md). Historical code excerpts below are implementation sketches; `lib/db.ts`, the tag routes, and `app/page.tsx` contain the tested implementation.
+
 Custom color-coded labels that let users categorize todos with multiple, user-owned tags and filter by them across the app.
 
 **Dependencies**: Adds `tags` and `todo_tags` tables that relate many-to-many with `todos` ([PRP 01](./01-todo-crud-operations.md)). Feeds tag-based filtering in [PRP 08 — Search & Filtering](./08-search-filtering.md). Tags are inherited by new instances of recurring todos ([PRP 03](./03-recurring-todos.md)). Export/import handling of tag data is covered by [PRP 09 — Export & Import](./09-export-import.md).
@@ -33,7 +35,7 @@ Tags are strictly user-scoped: no user can see, edit, or apply another user's ta
 
 ### Applying tags to a todo
 1. Below the todo creation form (or inside the edit modal), the user sees a row of tag pills for all their tags.
-2. Clicking an unselected pill selects it (checkmark + colored background + white text); clicking a selected pill deselects it.
+2. Clicking an unselected pill selects it (checkmark + colored background + contrast-safe black or white text); clicking a selected pill deselects it. Existing-task assignment also supports checkboxes in the Task tags dialog.
 3. Multiple tags may be selected. On submit, the selected tag IDs are attached to the todo.
 
 ### Editing a tag
@@ -62,7 +64,7 @@ This PRP owns the `tags` and `todo_tags` tables:
 CREATE TABLE tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
+  name TEXT COLLATE NOCASE NOT NULL,
   color TEXT NOT NULL DEFAULT '#3B82F6',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(user_id, name)
@@ -102,7 +104,12 @@ export interface UpdateTagInput {
 }
 ```
 
-`tagDB` exports on `lib/db.ts`: `findAllByUser(userId)`, `findById(id, userId)`, `create(userId, input)`, `update(id, userId, input)`, `delete(id, userId)`, `attachToTodo(todoId, tagId, userId)`, `detachFromTodo(todoId, tagId, userId)`, `findByTodoId(todoId)`.
+`tagDB` exports on `lib/db.ts`: `findAllByUser(userId)`, `findById(id, userId)`, `create(userId, input)`, `update(id, userId, input)`, `delete(id, userId)`, `attachToTodo(todoId, tagId, userId)`, `detachFromTodo(todoId, tagId, userId)`, `findByTodoId(todoId, userId)`.
+
+Shared edit/import contracts:
+- `replaceForTodo(todoId, tagIds, userId)` validates both owners before replacing associations atomically, deduplicates IDs, and accepts an empty selection. Call it inside Person 1's todo-edit transaction.
+- `findByName(name, userId)` and `findOrCreateByName(userId, input)` use trimmed names and SQLite NOCASE (ASCII case folding). Resolution returns `{ tag, created }` and retains the existing color on reuse. Both cooperate with Person 5's outer import transaction; non-ASCII case variants are not folded.
+- Creation defaults the color to `#3B82F6`; a partial update has no color default, so renaming cannot reset an existing custom color.
 
 ### API Endpoints
 
@@ -246,37 +253,39 @@ function ManageTagsModal({ tags, onClose, onCreate, onUpdate, onDelete }: {
 
 ## Acceptance Criteria
 
-- [ ] User can create a tag with a name and color; color defaults to `#3B82F6` if omitted
-- [ ] User can edit a tag's name and/or color; the change is reflected on every todo using that tag without re-tagging
-- [ ] User can delete a tag; it is removed from all todos via CASCADE
-- [ ] Duplicate tag name for the same user is rejected with a clear error
-- [ ] The same tag name is allowed for two different users
-- [ ] A todo can have multiple tags attached simultaneously
-- [ ] Tag pills render with the tag's color and white text, in both light and dark mode
-- [ ] Filtering by a tag shows only todos carrying that tag (see PRP 08 for combination with other filters)
-- [ ] Attaching/detaching an already-attached/detached tag is idempotent (no error, no duplicate rows)
-- [ ] All tag endpoints reject unauthenticated requests with `401`
-- [ ] All tag endpoints scope reads/writes to `session.userId`; cross-user access returns `404`
+- [x] User can create a tag with a name and color; color defaults to `#3B82F6` if omitted
+- [x] User can edit a tag's name and/or color; the change is reflected on every todo using that tag without re-tagging
+- [x] User can delete a tag; it is removed from all todos via CASCADE
+- [x] Duplicate tag name for the same user is rejected with a clear error
+- [x] The same tag name is allowed for two different users
+- [x] A todo can have multiple tags attached simultaneously
+- [x] Tag pills render with the tag's color and contrast-safe black or white text in both themes (AA takes precedence over always-white text on pale colors)
+- [x] Filtering by a tag shows only todos carrying that tag (see PRP 08 for combination with other filters)
+- [x] Attaching/detaching an already-attached/detached tag is idempotent (no error, no duplicate rows)
+- [x] All tag endpoints reject unauthenticated requests with `401`
+- [x] All tag endpoints scope reads/writes to `session.userId`; cross-user access returns `404`
 
 ## Testing Requirements
 
 ### E2E (Playwright) — `tests/08-tags.spec.ts`
 
-- [ ] Create a tag via the Manage Tags modal; verify it appears in the tag list and pill selector
-- [ ] Edit a tag's name/color; verify the change propagates to a todo already displaying that tag
-- [ ] Delete a tag; verify it disappears from all todos that had it
-- [ ] Attempt to create a duplicate tag name for the same user; verify the error message is shown and no duplicate row is created
-- [ ] Assign two tags to one todo; verify both pills render on the todo card
-- [ ] Filter the todo list by a tag; verify only matching todos are shown, then clear the filter via "All Tags"
-- [ ] Use the `createTag()` helper from `tests/helpers.ts` to set up fixtures for other feature tests that depend on tags (e.g. filtering, templates)
+- [x] Create a tag via the Manage Tags modal; verify it appears in the tag list and pill selector
+- [x] Edit a tag's name/color; verify the change propagates to a todo already displaying that tag
+- [x] Delete a tag; verify it disappears from all todos that had it
+- [x] Attempt to create a duplicate tag name for the same user; verify the error message is shown and no duplicate row is created
+- [x] Assign two tags to one todo; verify both pills render on the todo card
+- [x] Filter the todo list by a tag; verify only matching todos are shown, then clear the filter via "All Tags"
+- [x] Use the `createTag()` helper from `tests/helpers.ts` to set up fixtures for other feature tests that depend on tags (e.g. filtering, templates)
+- [x] Partial-update API behavior, 401/404 checks, failed-assignment rollback/retry, focus restoration, AA contrast and warmed CRUD latency
 
 ### Unit Tests
 
-- [ ] Tag name validation (empty/whitespace rejected, valid names accepted, trimming applied)
-- [ ] Hex color validation (`#3B82F6` accepted, `red` and `#ZZZ` rejected)
-- [ ] `UNIQUE(user_id, name)` constraint: same name across two users succeeds; same name twice for one user throws
-- [ ] `attachToTodo` / `detachFromTodo` idempotency (second call does not throw or duplicate)
-- [ ] CASCADE delete: deleting a tag removes all matching `todo_tags` rows and leaves unrelated rows intact
+- [x] Tag name validation (empty/whitespace rejected, valid names accepted, trimming applied)
+- [x] Hex color validation (`#3B82F6` accepted, `red` and `#ZZZ` rejected)
+- [x] `UNIQUE(user_id, name)` constraint: same name across two users succeeds; same name twice for one user throws
+- [x] `attachToTodo` / `detachFromTodo` idempotency (second call does not throw or duplicate)
+- [x] CASCADE delete: deleting a tag removes all matching `todo_tags` rows and leaves unrelated rows intact
+- [x] Atomic tag replacement, same-name import resolution, outer transaction rollback and 60-task cascade integrity
 
 ## Out of Scope
 

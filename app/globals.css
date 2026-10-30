@@ -95,6 +95,8 @@ h1 { font-size: 34px; line-height: 1.15; font-weight: 600; }
 .preset button:hover { color: var(--accent); }
 .results-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 46px; color: var(--muted); font-size: 11px; }
 .filter-actions { display: flex; align-items: center; gap: 15px; }
+.active-filter-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 11px; border-left: 2px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: 11px; line-height: 1.6; margin-bottom: 12px; }
+.active-filter-summary p { min-width: 0; overflow-wrap: anywhere; }
 .text-button { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-size: 11px; }
 .danger-text { color: var(--danger); }
 .task-list { animation: reveal 220ms ease-out; }

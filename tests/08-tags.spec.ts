@@ -57,8 +57,15 @@ test('multiple tags can be selected on creation and detached independently', asy
 });
 
 test('API validates input, protects both association owners, and handles duplicate operations', async ({ request, account }) => {
-  const tag = await createTag(request, 'API tag');
+  const tag = await createTag(request, 'API tag', '#123456');
   const todo = await createTodo(request, 'API todo');
+  const renamed = await request.put(`/api/tags/${tag.id}`, { data: { name: 'Renamed' } });
+  expect(renamed.status()).toBe(200);
+  expect((await renamed.json()).color).toBe('#123456');
+  const recolored = await request.put(`/api/tags/${tag.id}`, { data: { color: '#ABCDEF' } });
+  expect(recolored.status()).toBe(200);
+  expect((await recolored.json()).name).toBe('Renamed');
+  expect((await request.put(`/api/tags/${tag.id}`, { data: {} })).status()).toBe(400);
   for (const body of [{ name: 7 }, { name: ' ' }, { name: 'Bad', color: '' }, { name: 'Bad', color: 'red' }]) {
     expect((await request.post('/api/tags', { data: body })).status()).toBe(400);
   }
@@ -75,6 +82,65 @@ test('API validates input, protects both association owners, and handles duplica
   for (let attempt = 0; attempt < 2; attempt++) expect((await request.delete(`/api/todos/${todo.id}/tags`, { data: { tag_id: tag.id } })).status()).toBe(200);
 });
 
+test('failed tag assignments roll back, retain focus, and can be retried', async ({ page }) => {
+  await page.goto('/');
+  const trigger = page.getByRole('button', { name: 'Edit tags for Team meeting' });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Task tags' });
+  const checkbox = dialog.getByLabel('Work', { exact: true });
+  await page.route('**/api/todos/*/tags', (route) => route.fulfill({
+    status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Tag change failed. Please retry.' }),
+  }));
+  await checkbox.uncheck();
+  await expect(dialog.getByRole('alert')).toContainText('Tag change failed');
+  await expect(checkbox).toBeChecked();
+  await expect(checkbox).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await page.unroute('**/api/todos/*/tags');
+  await trigger.click();
+  await checkbox.uncheck();
+  await expect(checkbox).toBeEnabled();
+  await expect(checkbox).not.toBeChecked();
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await page.reload();
+  const meeting = page.getByTestId('task-row').filter({ has: page.getByRole('heading', { name: 'Team meeting' }) });
+  await expect(meeting).toBeVisible();
+  await expect(meeting.getByRole('button', { name: 'Work', exact: true })).toHaveCount(0);
+});
+
+test('custom tag colors keep AA text contrast and long labels fit in both themes', async ({ page, request }, testInfo) => {
+  const colors = ['#FFFFFF', '#000000', '#FFFF00', '#777777', '#3B82F6'];
+  const tags = [];
+  for (const [index, color] of colors.entries()) {
+    tags.push(await createTag(request, index === 0 ? 'An exceptionally long assigned label that should never break the task layout' : `Contrast ${index}`, color));
+  }
+  await createTodo(request, 'Contrast task', tags.map((tag) => tag.id));
+  await page.goto('/');
+  const row = page.getByTestId('task-row').filter({ has: page.getByRole('heading', { name: 'Contrast task' }) });
+  await expect(row).toBeVisible();
+  for (const theme of ['light', 'dark']) {
+    if (theme === 'dark') await page.getByRole('button', { name: 'Use dark theme' }).click();
+    for (const tag of tags) {
+      const ratio = await row.getByRole('button', { name: tag.name, exact: true }).evaluate((element) => {
+        const style = getComputedStyle(element);
+        const luminance = (color: string) => {
+          const channels = color.match(/\d+/g)!.slice(0, 3).map(Number)
+            .map((channel) => channel / 255).map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+          return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+        };
+        const foreground = luminance(style.color);
+        const background = luminance(style.backgroundColor);
+        return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      });
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`tag-contrast-${theme}.png`), fullPage: true });
+  }
+});
+
 test('all tag endpoints reject missing and invalid sessions', async ({ playwright }) => {
   const anonymous = await playwright.request.newContext({ baseURL: 'http://127.0.0.1:3107' });
   try {
@@ -83,4 +149,20 @@ test('all tag endpoints reject missing and invalid sessions', async ({ playwrigh
     }
     expect((await anonymous.get('/api/tags', { headers: { cookie: 'session=invalid' } })).status()).toBe(401);
   } finally { await anonymous.dispose(); }
+});
+
+test('warm tag CRUD requests average under 300ms', async ({ request }) => {
+  const warmup = await createTag(request, 'Latency warmup');
+  expect((await request.put(`/api/tags/${warmup.id}`, { data: { name: 'Warmed' } })).status()).toBe(200);
+  expect((await request.delete(`/api/tags/${warmup.id}`)).status()).toBe(204);
+  await request.get('/api/tags');
+  const started = performance.now();
+  const iterations = 5;
+  for (let index = 0; index < iterations; index++) {
+    const tag = await createTag(request, `Latency ${index}`);
+    expect((await request.get('/api/tags')).status()).toBe(200);
+    expect((await request.put(`/api/tags/${tag.id}`, { data: { color: '#000000' } })).status()).toBe(200);
+    expect((await request.delete(`/api/tags/${tag.id}`)).status()).toBe(204);
+  }
+  expect((performance.now() - started) / (iterations * 4)).toBeLessThan(300);
 });

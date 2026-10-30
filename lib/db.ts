@@ -55,7 +55,9 @@ export const tagInputSchema = z.object({
   name: z.string().trim().min(1, 'Tag name is required'),
   color: z.string().regex(/^#[\da-f]{6}$/i, 'Color must be a valid hex code').default('#3B82F6'),
 }).strict();
-export const tagUpdateSchema = tagInputSchema.partial().refine(
+export const tagUpdateSchema = tagInputSchema.extend({
+  color: tagInputSchema.shape.color.removeDefault(),
+}).partial().refine(
   (value) => Object.keys(value).length > 0, 'At least one field is required',
 );
 export const todoInputSchema = z.object({
@@ -120,6 +122,18 @@ export function createStore(database: Database.Database) {
       return database.prepare('SELECT * FROM tags WHERE user_id = ? ORDER BY name COLLATE NOCASE, id').all(userId) as Tag[];
     },
     findById: findTag,
+    findByName(name: string, userId: number): Tag | undefined {
+      const trimmed = tagInputSchema.shape.name.parse(name);
+      return database.prepare('SELECT * FROM tags WHERE user_id = ? AND name = ? COLLATE NOCASE ORDER BY id LIMIT 1')
+        .get(userId, trimmed) as Tag | undefined;
+    },
+    findOrCreateByName(userId: number, input: CreateTagInput): { tag: Tag; created: boolean } {
+      const parsed = tagInputSchema.parse(input);
+      return database.transaction(() => {
+        const existing = tags.findByName(parsed.name, userId);
+        return existing ? { tag: existing, created: false } : { tag: tags.create(userId, parsed), created: true };
+      })();
+    },
     create(userId: number, input: CreateTagInput): Tag {
       const parsed = tagInputSchema.parse(input);
       try {
@@ -157,6 +171,19 @@ export function createStore(database: Database.Database) {
         database.prepare('DELETE FROM todo_tags WHERE todo_id = ? AND tag_id = ?').run(todoId, tagId);
       })();
     },
+    replaceForTodo(todoId: number, tagIds: number[], userId: number): Tag[] {
+      const ids = [...new Set(z.array(z.number().int().positive()).parse(tagIds))];
+      return database.transaction(() => {
+        if (!database.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(todoId, userId)) {
+          throw new DataError('Todo not found', 404);
+        }
+        for (const tagId of ids) requireRelations(todoId, tagId, userId);
+        database.prepare('DELETE FROM todo_tags WHERE todo_id = ?').run(todoId);
+        const insert = database.prepare('INSERT INTO todo_tags(todo_id, tag_id) VALUES (?, ?)');
+        for (const tagId of ids) insert.run(todoId, tagId);
+        return tags.findByTodoId(todoId, userId);
+      })();
+    },
     findByTodoId(todoId: number, userId: number): Tag[] {
       return database.prepare(`SELECT tags.* FROM tags
         JOIN todo_tags ON tags.id = todo_tags.tag_id JOIN todos ON todos.id = todo_tags.todo_id
@@ -187,7 +214,7 @@ export function createStore(database: Database.Database) {
       return database.transaction(() => {
         const result = database.prepare('INSERT INTO todos(user_id, title, priority) VALUES (?, ?, ?)').run(userId, parsed.title, parsed.priority);
         const id = Number(result.lastInsertRowid);
-        for (const tagId of new Set(parsed.tag_ids)) tags.attachToTodo(id, tagId, userId);
+        tags.replaceForTodo(id, parsed.tag_ids, userId);
         return todos.findAllByUser(userId).find((row) => row.id === id)!;
       })();
     },
