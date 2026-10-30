@@ -1,5 +1,51 @@
 # Complete Setup Guide: Todo App Development with GitHub Copilot
 
+## Person 4 Build: Tags and Search
+
+This branch now includes a runnable Next.js 16 / React 19 / Tailwind 4 implementation of PRPs 06 and 08. The rest of this guide describes the full target app, not features already delivered here.
+
+From the repository folder, with Node.js 22+ and npm installed:
+
+```bash
+npm install
+npm run dev:demo
+```
+
+Open the URL printed by Next.js (normally http://127.0.0.1:3000). Demo mode binds to loopback, uses a separate `demo.db`, and seeds sample todos/subtasks/tags once. Changes persist across restarts. It bypasses sign-in **only** when `NODE_ENV=development`, `DEMO_MODE=true`, and `DATABASE_PATH=demo.db`; it cannot activate in a production build. Do not expose demo mode publicly or use it for private data.
+
+### Delivered
+
+- User-owned tag create/edit/delete, native and hex color inputs, confirmation, duplicate-name validation, multi-tag selection, and per-task attach/detach.
+- SQLite foreign keys, cascading associations, idempotent attachment, transactional task/tag creation, and ownership checks on both association endpoints.
+- Title/subtask search with a 300ms debounce and immediate clear; priority/tag/completion filters and inclusive Singapore-date bounds combined with AND.
+- Saved filter preview, apply/delete, corrupted-storage handling, storage-error feedback, and per-account browser storage keys.
+- Filtered section counts, distinct empty states, deleted-tag fallback, keyboard-accessible native dialogs, responsive layout, and light/dark themes.
+
+Tag uniqueness uses trimmed names and SQLite `NOCASE` (ASCII case folding); non-ASCII case variants are not normalized. Coordinate this contract with Person 5's importer. Tag text switches between black and white for WCAG AA contrast rather than forcing white text on pale custom colors. Presets remain browser-local but are additionally account-scoped so shared-browser accounts do not share saved views.
+
+### Integration Handoff
+
+- **Person 1:** `lib/db.ts` supplies baseline users/todos/subtasks tables and `todoDB.findAllByUser`/`create`, plus `GET`/`POST /api/todos`, solely to exercise Person 4's features. Creation currently accepts title, priority, and tag IDs; full CRUD, due-date editing, recurrence, calendar, and other features remain your integration work. The main UI stays in `app/page.tsx` per repository convention.
+- **Person 3:** Nested subtasks are read for search/progress display; subtask CRUD is not implemented here.
+- **Person 5:** Replace/integrate `lib/auth.ts` with the passkey flow. It currently verifies an HS256 JWT in the `session` cookie, fails closed without a valid session, checks that the user exists, and exports `createSession`/`getSession`/`deleteSession`. Set a private `JWT_SECRET` of at least 32 bytes. `GET /api/auth/me` exposes the session; no passkey login/enrollment endpoints or page-redirect protection are claimed by this build.
+- **Deployment:** `npm run dev` uses normal authentication, not the demo. Set `DATABASE_PATH` for persistent SQLite storage and `APP_ORIGIN` to your public origin behind a reverse proxy; otherwise write-request origin checks use the incoming Host header and request scheme. Never deploy with the test-only JWT secret in the Playwright configuration. This branch is not yet a complete production-ready Todo App.
+- **Existing databases:** The baseline creates missing tables, not a full migration system. A pre-existing case-sensitive tags table needs a coordinated migration and duplicate-name resolution before adopting the case-insensitive contract.
+
+### Verification
+
+```bash
+npm test
+npm run typecheck
+npm run lint
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
+
+Unit tests cover filters, Singapore boundaries, preset validation/storage, tag isolation, idempotency, cascade deletion, transactional rollback, and the demo guard. Playwright runs the tag and search workflows on desktop and mobile, including signed test sessions, unauthorized/cross-user API checks, and light/dark screenshots. It uses `.person4-e2e.db` and a test-only signing secret, independent of `todos.db` and `demo.db`. Screenshots/traces are written under `test-results/` (gitignored). Authentication fixtures do not depend on test-file execution order or a not-yet-built passkey UI.
+
+---
+
 This walkthrough will guide you from zero to running the Todo App with GitHub Copilot assistance.
 
 Reference : https://ai-sdlc-workshop-day1-production.up.railway.app/login
